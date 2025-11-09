@@ -332,7 +332,11 @@ const saveChanges = async () => {
                 <div class="h-full overflow-auto">
                     <table class="w-full text-xs font-mono bg-surface-900">
                         <tbody>
-                            <tr v-for="(line, index) in dumpLines" :key="index">
+                            <tr
+                                v-for="(line, index) in dumpLines"
+                                :key="index"
+                                class="hover:bg-surface-700"
+                            >
                                 <td class="px-2 py-1 text-surface-400">
                                     {{ line.offset }}
                                 </td>
