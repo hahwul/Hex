@@ -22,7 +22,18 @@ const modalState = reactive({
 // Edit mode removed, using per-line editing
 
 // Get raw data from request or response
-const raw = computed(() => props.request?.raw || props.response?.raw || "");
+const raw = computed(() => {
+    if (isReplayTab.value && isRequest.value) {
+        const editor = props.sdk.window?.getActiveEditor?.();
+        if (editor) {
+            const editorView = editor.getEditorView();
+            if (editorView) {
+                return editorView.state.doc.toString();
+            }
+        }
+    }
+    return props.request?.raw || props.response?.raw || "";
+});
 
 // Determine if it's a request or response
 const isRequest = computed(() => !!props.request);
@@ -195,6 +206,36 @@ const updateLine = (line: {
     rawData.value = new Uint8Array(newBytes);
 };
 
+// Helper function to manually refresh hex viewer display
+const refreshHexDisplay = () => {
+    const data = rawData.value;
+    if (data.length === 0) {
+        dumpLines.value = [
+            {
+                offset: "",
+                hex: "",
+                ascii: "No data to display",
+                editing: false,
+            },
+        ];
+        return;
+    }
+
+    const lines = [];
+    for (let i = 0; i < data.length; i += 16) {
+        const chunk = data.slice(i, i + 16);
+        const offset = i.toString(16).padStart(8, "0");
+        const hex = Array.from(chunk)
+            .map((b) => b.toString(16).padStart(2, "0"))
+            .join(" ");
+        const ascii = Array.from(chunk)
+            .map((b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : "."))
+            .join("");
+        lines.push({ offset, hex, ascii, editing: false });
+    }
+    dumpLines.value = lines;
+};
+
 // Check if data is truncated
 const isTruncated = computed(() => {
     const raw = props?.request?.raw;
@@ -203,27 +244,46 @@ const isTruncated = computed(() => {
 
 // Edit mode is now controlled by double-click
 
-// Save changes (for Reply tab only)
+// Save changes (for Replay tab only)
 const saveChanges = async () => {
     if (!isRequest.value) return; // Only for requests
+    if (!isReplayTab.value) return; // Only in Replay tab
 
     try {
         // Convert rawData back to string
         const decoder = new TextDecoder();
         const newRaw = decoder.decode(rawData.value);
 
-        // Update the request via GraphQL mutate
-        await props.sdk.graphql.mutate("updateRequest", {
-            id: props.request.id,
-            raw: newRaw,
-        });
+        // Get the active editor and update its content
+        const editor = props.sdk.window?.getActiveEditor?.();
+        if (editor) {
+            // Get the current editor view to update the content
+            const editorView = editor.getEditorView();
+            if (editorView) {
+                // Replace the entire editor content with the modified raw data
+                editorView.dispatch({
+                    changes: {
+                        from: 0,
+                        to: editorView.state.doc.length,
+                        insert: newRaw,
+                    },
+                });
+            }
+        }
+
         props.sdk.window?.showToast?.("Request updated successfully", {
             variant: "success",
         });
-    } catch (error) {
-        props.sdk.window?.showToast?.("Failed to update request", {
-            variant: "error",
-        });
+    } catch (error: unknown) {
+        console.error("[Hex View Mode] Failed to update request:", error);
+        const errorMessage =
+            error instanceof Error ? error.message : "Unknown error";
+        props.sdk.window?.showToast?.(
+            `Failed to update request: ${errorMessage}`,
+            {
+                variant: "error",
+            },
+        );
     }
 };
 </script>
