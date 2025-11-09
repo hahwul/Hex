@@ -21,9 +21,6 @@ const modalState = reactive({
 
 // Edit mode removed, using per-line editing
 
-// Flag to prevent watch from overwriting during save
-const isSaving = ref(false);
-
 // Get raw data from request or response
 const raw = computed(() => props.request?.raw || props.response?.raw || "");
 
@@ -107,9 +104,6 @@ const rawData = ref<Uint8Array>(new Uint8Array());
 watch(
     raw,
     (newRaw) => {
-        // Don't overwrite if we're in the middle of saving
-        if (isSaving.value) return;
-
         try {
             if (!newRaw) {
                 rawData.value = new Uint8Array();
@@ -201,6 +195,36 @@ const updateLine = (line: {
     rawData.value = new Uint8Array(newBytes);
 };
 
+// Helper function to manually refresh hex viewer display
+const refreshHexDisplay = () => {
+    const data = rawData.value;
+    if (data.length === 0) {
+        dumpLines.value = [
+            {
+                offset: "",
+                hex: "",
+                ascii: "No data to display",
+                editing: false,
+            },
+        ];
+        return;
+    }
+
+    const lines = [];
+    for (let i = 0; i < data.length; i += 16) {
+        const chunk = data.slice(i, i + 16);
+        const offset = i.toString(16).padStart(8, "0");
+        const hex = Array.from(chunk)
+            .map((b) => b.toString(16).padStart(2, "0"))
+            .join(" ");
+        const ascii = Array.from(chunk)
+            .map((b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : "."))
+            .join("");
+        lines.push({ offset, hex, ascii, editing: false });
+    }
+    dumpLines.value = lines;
+};
+
 // Check if data is truncated
 const isTruncated = computed(() => {
     const raw = props?.request?.raw;
@@ -215,9 +239,6 @@ const saveChanges = async () => {
     if (!isReplayTab.value) return; // Only in Replay tab
 
     try {
-        // Set flag to prevent watch from overwriting during editor update
-        isSaving.value = true;
-
         // Convert rawData back to string
         const decoder = new TextDecoder();
         const newRaw = decoder.decode(rawData.value);
@@ -239,16 +260,13 @@ const saveChanges = async () => {
             }
         }
 
-        // Reset flag to allow watch to refresh hex viewer from the updated editor
-        setTimeout(() => {
-            isSaving.value = false;
-        }, 50);
+        // Manually refresh hex viewer display to show saved state
+        refreshHexDisplay();
 
         props.sdk.window?.showToast?.("Request updated successfully", {
             variant: "success",
         });
     } catch (error: unknown) {
-        isSaving.value = false; // Reset flag on error
         console.error("[Hex View Mode] Failed to update request:", error);
         const errorMessage =
             error instanceof Error ? error.message : "Unknown error";
