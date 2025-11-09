@@ -2,7 +2,7 @@
 
 Caido Hex Viewer and Editor Plugin
 
-![](images/showcase.png)
+![](images/screenshot.png)
 
 ## Features
 
