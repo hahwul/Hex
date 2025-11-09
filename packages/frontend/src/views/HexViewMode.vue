@@ -1,12 +1,20 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
+import HexView from "./HexView.vue";
 
 const props = defineProps<{
     sdk: any;
-    request: any;
+    request?: any;
+    response?: any;
 }>();
 
 const activeTab = ref(0);
+
+// Get raw data from request or response
+const raw = computed(() => props.request?.raw || props.response?.raw || "");
+
+// Determine if it's a request or response
+const isRequest = computed(() => !!props.request);
 
 // Parse HTTP raw data
 const parseHttpRaw = (raw: string) => {
@@ -41,35 +49,50 @@ const parseHttpRaw = (raw: string) => {
 
 const parsedHttp = computed(() => {
     try {
-        if (!props?.request?.raw) return null;
-        return parseHttpRaw(props.request.raw);
+        if (!raw.value) return null;
+        return parseHttpRaw(raw.value);
     } catch (error) {
         console.error("[Hex View Mode] Error parsing HTTP raw:", error);
         return null;
     }
 });
 
-// Convert entire raw request to Uint8Array for hex dump, with size limit
-const rawData = computed(() => {
-    try {
-        const raw = props?.request?.raw;
-        if (!raw) return new Uint8Array();
+// Raw data as ref for editing
+const rawData = ref<Uint8Array>(new Uint8Array());
 
-        // Size limit: 10KB
-        const maxSize = 10240;
-        const rawStr = raw.length > maxSize ? raw.substring(0, maxSize) : raw;
+// Initialize and watch for raw data changes
+watch(
+    raw,
+    (newRaw) => {
+        try {
+            if (!newRaw) {
+                rawData.value = new Uint8Array();
+                return;
+            }
 
-        // Assuming raw is UTF-8 encoded string, convert to Uint8Array
-        const encoder = new TextEncoder();
-        return encoder.encode(rawStr);
-    } catch (error) {
-        console.error(
-            "[Hex View Mode] Error converting raw to Uint8Array:",
-            error,
-        );
-        return new Uint8Array();
-    }
-});
+            // Size limit: 10KB
+            const maxSize = 10240;
+            const rawStr =
+                newRaw.length > maxSize ? newRaw.substring(0, maxSize) : newRaw;
+
+            // Assuming raw is UTF-8 encoded string, convert to Uint8Array
+            const encoder = new TextEncoder();
+            rawData.value = encoder.encode(rawStr);
+        } catch (error) {
+            console.error(
+                "[Hex View Mode] Error converting raw to Uint8Array:",
+                error,
+            );
+            rawData.value = new Uint8Array();
+        }
+    },
+    { immediate: true },
+);
+
+// Update raw data from editor
+const updateRawData = (newData: Uint8Array) => {
+    rawData.value = newData;
+};
 
 // Generate Hex Dump
 const hexDump = computed(() => {
@@ -93,8 +116,7 @@ const hexDump = computed(() => {
 
 // Check if data is truncated
 const isTruncated = computed(() => {
-    const raw = props?.request?.raw;
-    return raw && raw.length > 10240;
+    return raw.value && raw.value.length > 10240;
 });
 
 // Check for important headers
@@ -128,8 +150,13 @@ const hasImportantHeaders = computed(() => {
                 <div class="flex items-center gap-2 text-surface-300">
                     <i class="fas fa-hexagon text-primary-400"></i>
                     <span class="text-sm font-medium"
-                        >{{ parsedHttp?.method || "GET" }}
-                        {{ props.request?.host || "unknown"
+                        >{{
+                            isRequest ? parsedHttp?.method || "GET" : "Response"
+                        }}
+                        {{
+                            props.request?.host ||
+                            props.response?.host ||
+                            "unknown"
                         }}{{ props.request?.path || "/" }}</span
                     >
                     <span
@@ -156,7 +183,6 @@ const hasImportantHeaders = computed(() => {
                         Hex Dump
                     </button>
                     <button
-                        v-if="hasImportantHeaders"
                         class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
                         :class="
                             activeTab === 1
@@ -164,6 +190,18 @@ const hasImportantHeaders = computed(() => {
                                 : 'border-transparent text-surface-400 hover:text-surface-200'
                         "
                         @click="activeTab = 1"
+                    >
+                        Hex Editor
+                    </button>
+                    <button
+                        v-if="hasImportantHeaders"
+                        class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
+                        :class="
+                            activeTab === 2
+                                ? 'border-primary-500 text-primary-400'
+                                : 'border-transparent text-surface-400 hover:text-surface-200'
+                        "
+                        @click="activeTab = 2"
                     >
                         Headers
                     </button>
@@ -180,9 +218,18 @@ const hasImportantHeaders = computed(() => {
                     >
                 </div>
 
+                <!-- Hex Editor Tab -->
+                <div v-if="activeTab === 1" class="h-full">
+                    <HexView
+                        :modelValue="rawData"
+                        :isEditable="true"
+                        @update:modelValue="updateRawData"
+                    />
+                </div>
+
                 <!-- Headers Tab -->
                 <div
-                    v-if="activeTab === 1 && hasImportantHeaders"
+                    v-if="activeTab === 2 && hasImportantHeaders"
                     class="space-y-2"
                 >
                     <div
@@ -221,7 +268,11 @@ const hasImportantHeaders = computed(() => {
                 <div class="flex items-center gap-3 text-surface-400">
                     <span class="flex items-center gap-1">
                         <i class="fas fa-server"></i>
-                        {{ props.request?.host || "unknown" }}
+                        {{
+                            props.request?.host ||
+                            props.response?.host ||
+                            "unknown"
+                        }}
                     </span>
                     <span class="flex items-center gap-1">
                         <i class="fas fa-file"></i>

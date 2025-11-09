@@ -16,8 +16,8 @@ const parseHttpRaw = (raw: string) => {
 };
 
 export const init = (sdk: FrontendSDK) => {
-  const condition = (request: any): boolean => {
-    return true; // Show Hex ViewMode for all requests
+  const condition = (data: any): boolean => {
+    return true; // Show Hex ViewMode for all requests/responses
   };
 
   sdk.httpHistory?.addRequestViewMode({

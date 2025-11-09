@@ -25,12 +25,22 @@ export type FrontendSDK = Caido<API, Record<string, never>> & {
       view: { component: any };
       condition: (request: any) => boolean;
     }) => void;
+    addResponseViewMode: (options: {
+      label: string;
+      view: { component: any };
+      condition: (response: any) => boolean;
+    }) => void;
   };
   replay?: {
     addRequestViewMode: (options: {
       label: string;
       view: { component: any };
       condition: (request: any) => boolean;
+    }) => void;
+    addResponseViewMode: (options: {
+      label: string;
+      view: { component: any };
+      condition: (response: any) => boolean;
     }) => void;
   };
   search?: {
@@ -39,12 +49,22 @@ export type FrontendSDK = Caido<API, Record<string, never>> & {
       view: { component: any };
       condition: (request: any) => boolean;
     }) => void;
+    addResponseViewMode: (options: {
+      label: string;
+      view: { component: any };
+      condition: (response: any) => boolean;
+    }) => void;
   };
   sitemap?: {
     addRequestViewMode: (options: {
       label: string;
       view: { component: any };
       condition: (request: any) => boolean;
+    }) => void;
+    addResponseViewMode: (options: {
+      label: string;
+      view: { component: any };
+      condition: (response: any) => boolean;
     }) => void;
   };
 };
