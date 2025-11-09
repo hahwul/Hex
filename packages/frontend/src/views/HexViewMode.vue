@@ -166,9 +166,13 @@ watch(
         for (let i = 0; i < data.length; i += 16) {
             const chunk = data.slice(i, i + 16);
             const offset = i.toString(16).padStart(8, "0");
-            const hex = Array.from(chunk)
-                .map((b) => b.toString(16).padStart(2, "0"))
-                .join(" ");
+            // Group hex bytes in sets of 8 for better readability with less space
+            const hexBytes = Array.from(chunk).map((b) => b.toString(16).padStart(2, "0"));
+            const hexGroups = [];
+            for (let j = 0; j < hexBytes.length; j += 8) {
+                hexGroups.push(hexBytes.slice(j, j + 8).join(" "));
+            }
+            const hex = hexGroups.join("  ");
             const ascii = Array.from(chunk)
                 .map((b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : "."))
                 .join("");
@@ -204,36 +208,6 @@ const updateLine = (line: {
         if (!isNaN(byte)) newBytes.push(byte);
     }
     rawData.value = new Uint8Array(newBytes);
-};
-
-// Helper function to manually refresh hex viewer display
-const refreshHexDisplay = () => {
-    const data = rawData.value;
-    if (data.length === 0) {
-        dumpLines.value = [
-            {
-                offset: "",
-                hex: "",
-                ascii: "No data to display",
-                editing: false,
-            },
-        ];
-        return;
-    }
-
-    const lines = [];
-    for (let i = 0; i < data.length; i += 16) {
-        const chunk = data.slice(i, i + 16);
-        const offset = i.toString(16).padStart(8, "0");
-        const hex = Array.from(chunk)
-            .map((b) => b.toString(16).padStart(2, "0"))
-            .join(" ");
-        const ascii = Array.from(chunk)
-            .map((b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : "."))
-            .join("");
-        lines.push({ offset, hex, ascii, editing: false });
-    }
-    dumpLines.value = lines;
 };
 
 // Check if data is truncated
@@ -333,10 +307,10 @@ const saveChanges = async () => {
                     <table class="w-full text-xs font-mono bg-surface-900">
                         <tbody>
                             <tr v-for="(line, index) in dumpLines" :key="index">
-                                <td class="px-2 py-1 text-surface-400">
+                                <td class="px-1 py-0.5 text-surface-400">
                                     {{ line.offset }}
                                 </td>
-                                <td class="px-2 py-1">
+                                <td class="px-1 py-0.5">
                                     <input
                                         :value="line.hex"
                                         readonly
@@ -344,7 +318,7 @@ const saveChanges = async () => {
                                         class="w-full bg-transparent text-surface-300 border-none outline-none cursor-pointer"
                                     />
                                 </td>
-                                <td class="px-2 py-1 text-surface-300">
+                                <td class="px-1 py-0.5 text-surface-300">
                                     {{ line.ascii }}
                                 </td>
                             </tr>
