@@ -62,9 +62,6 @@ const parsedHttp = computed(() => {
 // Raw data as ref for editing
 const rawData = ref<Uint8Array>(new Uint8Array());
 
-// Editable hex string for edit mode
-const editableHex = ref("");
-
 // Initialize and watch for raw data changes
 watch(
     raw,
@@ -72,7 +69,6 @@ watch(
         try {
             if (!newRaw) {
                 rawData.value = new Uint8Array();
-                editableHex.value = "";
                 return;
             }
 
@@ -84,58 +80,70 @@ watch(
             // Assuming raw is UTF-8 encoded string, convert to Uint8Array
             const encoder = new TextEncoder();
             rawData.value = encoder.encode(rawStr);
-
-            // Update editable hex
-            editableHex.value = Array.from(rawData.value)
-                .map((b) => b.toString(16).padStart(2, "0"))
-                .join(" ");
         } catch (error) {
             console.error(
                 "[Hex View Mode] Error converting raw to Uint8Array:",
                 error,
             );
             rawData.value = new Uint8Array();
-            editableHex.value = "";
         }
     },
     { immediate: true },
 );
 
-// Update rawData from editable hex
-const updateFromHex = () => {
-    try {
-        const hex = editableHex.value.replace(/\s+/g, "");
-        const bytes: number[] = [];
-        for (let i = 0; i < hex.length; i += 2) {
-            const byte = parseInt(hex.substr(i, 2), 16);
-            if (isNaN(byte)) continue;
-            bytes.push(byte);
+// Generate dump lines for table display
+const dumpLines = ref<{ offset: string; hex: string; ascii: string }[]>([]);
+
+// Update dump lines when rawData changes
+watch(
+    rawData,
+    () => {
+        const data = rawData.value;
+        if (data.length === 0) {
+            dumpLines.value = [
+                { offset: "", hex: "", ascii: "No data to display" },
+            ];
+            return;
         }
-        rawData.value = new Uint8Array(bytes);
-    } catch (error) {
-        console.error("[Hex View Mode] Error parsing hex string:", error);
+
+        const lines = [];
+        for (let i = 0; i < data.length; i += 16) {
+            const chunk = data.slice(i, i + 16);
+            const offset = i.toString(16).padStart(8, "0");
+            const hex = Array.from(chunk)
+                .map((b) => b.toString(16).padStart(2, "0"))
+                .join(" ");
+            const ascii = Array.from(chunk)
+                .map((b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : "."))
+                .join("");
+            lines.push({ offset, hex, ascii });
+        }
+        dumpLines.value = lines;
+    },
+    { immediate: true },
+);
+
+// Update line and recalculate
+const updateLine = (line: { offset: string; hex: string; ascii: string }) => {
+    // Update ASCII
+    const hexParts = line.hex.split(" ").filter((h) => h.length === 2);
+    const bytes = hexParts.map((h) => parseInt(h, 16)).filter((b) => !isNaN(b));
+    line.ascii = bytes
+        .map((b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : "."))
+        .join("");
+
+    // Reconstruct rawData
+    const allHex = dumpLines.value
+        .map((l) => l.hex)
+        .join(" ")
+        .replace(/\s+/g, "");
+    const newBytes: number[] = [];
+    for (let i = 0; i < allHex.length; i += 2) {
+        const byte = parseInt(allHex.substr(i, 2), 16);
+        if (!isNaN(byte)) newBytes.push(byte);
     }
+    rawData.value = new Uint8Array(newBytes);
 };
-
-// Generate Hex Dump
-const hexDump = computed(() => {
-    const data = rawData.value;
-    if (data.length === 0) return "No data to display";
-
-    let result = "";
-    for (let i = 0; i < data.length; i += 16) {
-        const chunk = data.slice(i, i + 16);
-        const offset = i.toString(16).padStart(8, "0");
-        const hex = Array.from(chunk)
-            .map((b) => b.toString(16).padStart(2, "0"))
-            .join(" ");
-        const ascii = Array.from(chunk)
-            .map((b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : "."))
-            .join("");
-        result += `${offset}  ${hex.padEnd(48)}  ${ascii}\n`;
-    }
-    return result;
-});
 
 // Check if data is truncated
 const isTruncated = computed(() => {
@@ -143,10 +151,7 @@ const isTruncated = computed(() => {
     return raw && raw.length > 10240;
 });
 
-// Toggle edit mode
-const toggleEditMode = () => {
-    editMode.value = !editMode.value;
-};
+// Edit mode is now controlled by checkbox
 
 // Save changes (for Reply tab only)
 const saveChanges = async () => {
@@ -213,39 +218,44 @@ const saveChanges = async () => {
                     >
                         <i class="fas fa-save"></i> Save
                     </button>
-                    <button
-                        class="px-3 py-1 text-xs rounded hover:bg-surface-700 text-surface-300"
-                        @click="toggleEditMode"
-                        :title="
-                            editMode
-                                ? 'Switch to Dump View'
-                                : 'Switch to Edit Mode'
-                        "
+                    <label
+                        class="flex items-center gap-2 px-3 py-1 text-xs text-surface-300"
                     >
-                        <i :class="editMode ? 'fas fa-eye' : 'fas fa-edit'"></i>
-                        {{ editMode ? "Dump" : "Edit" }}
-                    </button>
+                        <input
+                            type="checkbox"
+                            v-model="editMode"
+                            class="rounded border-surface-600 bg-surface-800"
+                        />
+                        Enable Editing
+                    </label>
                 </div>
             </div>
 
             <!-- Content - Flexible height -->
             <div class="flex-1 min-h-0 overflow-auto p-2">
-                <!-- Hex Editor Mode -->
-                <div v-if="editMode" class="h-full">
-                    <textarea
-                        v-model="editableHex"
-                        @input="updateFromHex"
-                        class="w-full h-full bg-surface-900 p-3 rounded text-xs text-surface-300 font-mono resize-none border border-surface-600"
-                        placeholder="Enter hex values (e.g., 48 65 6c 6c 6f)"
-                    ></textarea>
-                </div>
-
-                <!-- Hex Dump Mode -->
-                <div v-else class="h-full">
-                    <pre
-                        class="bg-surface-900 p-3 rounded text-xs text-surface-300 font-mono whitespace-pre overflow-auto h-full"
-                        >{{ hexDump }}</pre
-                    >
+                <!-- Hex Dump Table -->
+                <div class="h-full overflow-auto">
+                    <table class="w-full text-xs font-mono bg-surface-900">
+                        <tbody>
+                            <tr v-for="(line, index) in dumpLines" :key="index">
+                                <td class="px-2 py-1 text-surface-400">
+                                    {{ line.offset }}
+                                </td>
+                                <td class="px-2 py-1">
+                                    <input
+                                        v-model="line.hex"
+                                        :readonly="!editMode"
+                                        @input="updateLine(line)"
+                                        class="w-full bg-transparent text-surface-300 border-none outline-none"
+                                        :class="{ 'cursor-pointer': editMode }"
+                                    />
+                                </td>
+                                <td class="px-2 py-1 text-surface-300">
+                                    {{ line.ascii }}
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
 
