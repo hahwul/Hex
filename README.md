@@ -10,4 +10,4 @@ Caido Hex Viewer and Editor Plugin
 - Hex Editor (History, Reply)
 
 ## Special Thanks
-To Michael(@dyrandy), whose quiet persistence finally won. This plugin’s here because you asked nicely... a lot. 😉
+To Michael([@dyrandy](https://github.com/dyrandy)), whose quiet persistence finally won. This plugin’s here because you asked nicely... a lot. 😉
