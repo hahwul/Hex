@@ -1,10 +1,8 @@
-# VueJS Frontend Template
+# Hex
 
-This template should be used as a starting point for creating a new plugin with a VueJS frontend.
+Caido Hex Viewer and Editor Plugin
 
 ## Features
 
-- [pnpm](https://pnpm.io/) as package manager
-- [TypeScript](https://www.typescriptlang.org/)
-- [VueJS](https://vuejs.org/)
-- [PrimeVue](https://primevue.org/) for UI components
+- Hex Viewer (History, Reply)
+- Hex Editor (History, Reply)
