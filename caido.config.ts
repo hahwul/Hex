@@ -10,13 +10,13 @@ import prefixwrap from "postcss-prefixwrap";
 const id = "frontend-vue";
 export default defineConfig({
   id,
-  name: "Frontend Vue",
-  description: "Plugin template with frontend using VueJS",
-  version: "1.0.3",
+  name: "Hex",
+  description: "Hex Viewer and Editor",
+  version: "0.1.0",
   author: {
-    name: "Caido Labs Inc.",
-    email: "dev@caido.io",
-    url: "https://caido.io",
+    name: "hahwul",
+    email: "hahwul@gmail.com",
+    url: "https://www.hahwul.com",
   },
   plugins: [
     {
