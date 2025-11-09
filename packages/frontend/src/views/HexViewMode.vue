@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 
 const props = defineProps<{
     sdk: any;
@@ -7,7 +7,19 @@ const props = defineProps<{
     response?: any;
 }>();
 
-const editMode = ref(false);
+// Modal state
+const modalState = reactive({
+    showModal: false,
+    currentLine: null as {
+        offset: string;
+        hex: string;
+        ascii: string;
+        editing?: boolean;
+    } | null,
+    currentHex: "",
+});
+
+// Edit mode removed, using per-line editing
 
 // Get raw data from request or response
 const raw = computed(() => props.request?.raw || props.response?.raw || "");
@@ -17,6 +29,32 @@ const isRequest = computed(() => !!props.request);
 
 // Determine if it's in Replay tab (where editing is allowed)
 const isReplayTab = computed(() => window.location.hash.includes("/replay"));
+
+// Open modal for editing
+const openEditModal = (line: {
+    offset: string;
+    hex: string;
+    ascii: string;
+    editing?: boolean;
+}) => {
+    modalState.currentLine = line;
+    modalState.currentHex = line.hex;
+    modalState.showModal = true;
+};
+
+// Apply changes from modal
+const applyEdit = () => {
+    if (modalState.currentLine) {
+        modalState.currentLine.hex = modalState.currentHex;
+        updateLine(modalState.currentLine);
+    }
+    modalState.showModal = false;
+};
+
+// Close modal without saving
+const cancelEdit = () => {
+    modalState.showModal = false;
+};
 
 // Parse HTTP raw data
 const parseHttpRaw = (raw: string) => {
@@ -92,7 +130,9 @@ watch(
 );
 
 // Generate dump lines for table display
-const dumpLines = ref<{ offset: string; hex: string; ascii: string }[]>([]);
+const dumpLines = ref<
+    { offset: string; hex: string; ascii: string; editing?: boolean }[]
+>([]);
 
 // Update dump lines when rawData changes
 watch(
@@ -101,7 +141,12 @@ watch(
         const data = rawData.value;
         if (data.length === 0) {
             dumpLines.value = [
-                { offset: "", hex: "", ascii: "No data to display" },
+                {
+                    offset: "",
+                    hex: "",
+                    ascii: "No data to display",
+                    editing: false,
+                },
             ];
             return;
         }
@@ -116,7 +161,7 @@ watch(
             const ascii = Array.from(chunk)
                 .map((b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : "."))
                 .join("");
-            lines.push({ offset, hex, ascii });
+            lines.push({ offset, hex, ascii, editing: false });
         }
         dumpLines.value = lines;
     },
@@ -124,7 +169,12 @@ watch(
 );
 
 // Update line and recalculate
-const updateLine = (line: { offset: string; hex: string; ascii: string }) => {
+const updateLine = (line: {
+    offset: string;
+    hex: string;
+    ascii: string;
+    editing?: boolean;
+}) => {
     // Update ASCII
     const hexParts = line.hex.split(" ").filter((h) => h.length === 2);
     const bytes = hexParts.map((h) => parseInt(h, 16)).filter((b) => !isNaN(b));
@@ -151,7 +201,7 @@ const isTruncated = computed(() => {
     return raw && raw.length > 10240;
 });
 
-// Edit mode is now controlled by checkbox
+// Edit mode is now controlled by double-click
 
 // Save changes (for Reply tab only)
 const saveChanges = async () => {
@@ -218,16 +268,6 @@ const saveChanges = async () => {
                     >
                         <i class="fas fa-save"></i> Save
                     </button>
-                    <label
-                        class="flex items-center gap-2 px-3 py-1 text-xs text-surface-300"
-                    >
-                        <input
-                            type="checkbox"
-                            v-model="editMode"
-                            class="rounded border-surface-600 bg-surface-800"
-                        />
-                        Enable Editing
-                    </label>
                 </div>
             </div>
 
@@ -243,11 +283,10 @@ const saveChanges = async () => {
                                 </td>
                                 <td class="px-2 py-1">
                                     <input
-                                        v-model="line.hex"
-                                        :readonly="!editMode"
-                                        @input="updateLine(line)"
-                                        class="w-full bg-transparent text-surface-300 border-none outline-none"
-                                        :class="{ 'cursor-pointer': editMode }"
+                                        :value="line.hex"
+                                        readonly
+                                        @dblclick="openEditModal(line)"
+                                        class="w-full bg-transparent text-surface-300 border-none outline-none cursor-pointer"
                                     />
                                 </td>
                                 <td class="px-2 py-1 text-surface-300">
@@ -278,6 +317,39 @@ const saveChanges = async () => {
                     </span>
                 </div>
                 <div class="text-primary-400 font-medium">HEX</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Modal -->
+    <div
+        v-if="modalState.showModal"
+        class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+    >
+        <div
+            class="bg-surface-800 p-6 rounded-lg shadow-lg max-w-md w-full mx-4"
+        >
+            <h3 class="text-lg font-semibold text-surface-200 mb-4">
+                Edit Hex Values
+            </h3>
+            <textarea
+                v-model="modalState.currentHex"
+                class="w-full h-32 bg-surface-900 text-surface-300 p-3 rounded border border-surface-600 font-mono text-sm resize-none"
+                placeholder="Enter hex values (e.g., 48 65 6c 6c 6f)"
+            ></textarea>
+            <div class="flex justify-end gap-2 mt-4">
+                <button
+                    @click="cancelEdit"
+                    class="px-4 py-2 text-sm rounded bg-surface-600 text-surface-300 hover:bg-surface-500"
+                >
+                    Cancel
+                </button>
+                <button
+                    @click="applyEdit"
+                    class="px-4 py-2 text-sm rounded bg-primary-600 text-primary-100 hover:bg-primary-500"
+                >
+                    OK
+                </button>
             </div>
         </div>
     </div>
