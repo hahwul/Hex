@@ -215,7 +215,7 @@ const saveChanges = async () => {
     if (!isReplayTab.value) return; // Only in Replay tab
 
     try {
-        // Set flag to prevent watch from overwriting
+        // Set flag to prevent watch from overwriting during editor update
         isSaving.value = true;
 
         // Convert rawData back to string
@@ -239,14 +239,14 @@ const saveChanges = async () => {
             }
         }
 
+        // Reset flag to allow watch to refresh hex viewer from the updated editor
+        setTimeout(() => {
+            isSaving.value = false;
+        }, 50);
+
         props.sdk.window?.showToast?.("Request updated successfully", {
             variant: "success",
         });
-
-        // Reset flag after a short delay to allow editor update to propagate
-        setTimeout(() => {
-            isSaving.value = false;
-        }, 100);
     } catch (error: unknown) {
         isSaving.value = false; // Reset flag on error
         console.error("[Hex View Mode] Failed to update request:", error);
