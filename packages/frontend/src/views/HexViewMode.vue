@@ -311,12 +311,19 @@ const saveChanges = async () => {
                                     {{ line.offset }}
                                 </td>
                                 <td class="px-1 py-0.5">
-                                    <input
-                                        :value="line.hex"
-                                        readonly
+                                    <div
+                                        class="flex gap-0.5 flex-wrap cursor-pointer"
                                         @dblclick="openEditModal(line)"
-                                        class="w-full bg-transparent text-surface-300 border-none outline-none cursor-pointer"
-                                    />
+                                    >
+                                        <span
+                                            v-for="(byte, byteIndex) in line.hex.split(' ')"
+                                            :key="byteIndex"
+                                            class="hex-byte text-surface-300"
+                                            :class="{ 'hex-byte-separator': byteIndex === 7 && line.hex.split(' ').length > 8 }"
+                                        >
+                                            {{ byte }}
+                                        </span>
+                                    </div>
                                 </td>
                                 <td class="px-1 py-0.5 text-surface-300">
                                     {{ line.ascii }}
@@ -385,5 +392,18 @@ const saveChanges = async () => {
 </template>
 
 <style scoped>
-/* Additional styles if needed */
+.hex-byte {
+    padding: 1px 2px;
+    border-radius: 2px;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.hex-byte:hover {
+    background-color: rgba(108, 99, 255, 0.3);
+    color: #fff;
+}
+
+.hex-byte-separator {
+    margin-right: 4px;
+}
 </style>
