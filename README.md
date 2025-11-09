@@ -2,6 +2,8 @@
 
 Caido Hex Viewer and Editor Plugin
 
+![](images/showcase.png)
+
 ## Features
 
 - Hex Viewer (History, Reply)
