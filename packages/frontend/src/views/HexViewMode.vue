@@ -234,7 +234,7 @@ const saveChanges = async () => {
         };
 
         // Start a new replay task with modified request
-        await props.sdk.graphql.startReplayTask({
+        const result = await props.sdk.graphql.startReplayTask({
             sessionId,
             input: {
                 raw: newRaw,
@@ -242,6 +242,14 @@ const saveChanges = async () => {
                 settings: {},
             },
         });
+
+        // Set the new replay entry as active so changes are visible
+        if (result?.startReplayTask?.task?.replayEntry?.id) {
+            await props.sdk.graphql.setActiveReplaySessionEntry({
+                id: sessionId,
+                entryId: result.startReplayTask.task.replayEntry.id,
+            });
+        }
 
         props.sdk.window?.showToast?.("Request sent successfully", {
             variant: "success",
