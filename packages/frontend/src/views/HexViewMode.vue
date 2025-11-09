@@ -337,10 +337,14 @@ const saveChanges = async () => {
                                 :key="index"
                                 class="hover:bg-surface-700"
                             >
-                                <td class="px-2 py-1 text-surface-400">
+                                <td
+                                    class="px-2 py-1 text-surface-400 w-20 border-r border-surface-600"
+                                >
                                     {{ line.offset }}
                                 </td>
-                                <td class="px-2 py-1">
+                                <td
+                                    class="px-2 py-1 w-72 border-r border-surface-600"
+                                >
                                     <input
                                         :value="line.hex"
                                         readonly
@@ -348,7 +352,7 @@ const saveChanges = async () => {
                                         class="w-full bg-transparent text-surface-300 border-none outline-none cursor-pointer"
                                     />
                                 </td>
-                                <td class="px-2 py-1 text-surface-300">
+                                <td class="px-2 py-1 text-surface-300 w-40">
                                     {{ line.ascii }}
                                 </td>
                             </tr>
@@ -415,5 +419,8 @@ const saveChanges = async () => {
 </template>
 
 <style scoped>
+table {
+    border-collapse: collapse;
+}
 /* Additional styles if needed */
 </style>
