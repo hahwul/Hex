@@ -8,7 +8,7 @@ const props = defineProps<{
     response?: any;
 }>();
 
-const activeTab = ref(0);
+const editMode = ref(false);
 
 // Get raw data from request or response
 const raw = computed(() => props.request?.raw || props.response?.raw || "");
@@ -119,25 +119,39 @@ const isTruncated = computed(() => {
     return raw.value && raw.value.length > 10240;
 });
 
-// Check for important headers
-const hasImportantHeaders = computed(() => {
+// Toggle edit mode
+const toggleEditMode = () => {
+    editMode.value = !editMode.value;
+};
+
+// Save changes (for Reply tab only)
+const saveChanges = async () => {
+    if (!isRequest.value) return; // Only for requests
+
     try {
-        if (!parsedHttp.value?.headers) return false;
-        const importantHeaders = [
-            "content-type",
-            "content-length",
-            "transfer-encoding",
-        ];
-        return Object.keys(parsedHttp.value.headers).some((key) => {
-            if (typeof key !== "string") return false;
-            return importantHeaders.some((important) =>
-                key.toLowerCase().includes(important),
+        // Convert rawData back to string
+        const decoder = new TextDecoder();
+        const newRaw = decoder.decode(rawData.value);
+
+        // Update the request via SDK (assuming API exists)
+        // This is a placeholder - actual implementation depends on Caido SDK
+        if (props.sdk?.replay?.updateRequest) {
+            await props.sdk.replay.updateRequest(props.request.id, newRaw);
+            props.sdk.window?.showToast?.("Request updated successfully", {
+                variant: "success",
+            });
+        } else {
+            props.sdk.window?.showToast?.(
+                "Update not supported in this context",
+                { variant: "warning" },
             );
-        });
+        }
     } catch (error) {
-        return false;
+        props.sdk.window?.showToast?.("Failed to update request", {
+            variant: "error",
+        });
     }
-});
+};
 </script>
 
 <template>
@@ -166,60 +180,34 @@ const hasImportantHeaders = computed(() => {
                         }}</span
                     >
                 </div>
-            </div>
-
-            <!-- Simple Tab Navigation -->
-            <div class="border-b border-surface-600">
-                <div class="flex">
+                <div class="flex gap-1">
                     <button
-                        class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
-                        :class="
-                            activeTab === 0
-                                ? 'border-primary-500 text-primary-400'
-                                : 'border-transparent text-surface-400 hover:text-surface-200'
-                        "
-                        @click="activeTab = 0"
+                        v-if="isRequest"
+                        class="px-3 py-1 text-xs rounded hover:bg-surface-700 text-primary-400"
+                        @click="saveChanges"
+                        title="Save Changes"
                     >
-                        Hex Dump
+                        <i class="fas fa-save"></i> Save
                     </button>
                     <button
-                        class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
-                        :class="
-                            activeTab === 1
-                                ? 'border-primary-500 text-primary-400'
-                                : 'border-transparent text-surface-400 hover:text-surface-200'
+                        class="px-3 py-1 text-xs rounded hover:bg-surface-700 text-surface-300"
+                        @click="toggleEditMode"
+                        :title="
+                            editMode
+                                ? 'Switch to Dump View'
+                                : 'Switch to Edit Mode'
                         "
-                        @click="activeTab = 1"
                     >
-                        Hex Editor
-                    </button>
-                    <button
-                        v-if="hasImportantHeaders"
-                        class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
-                        :class="
-                            activeTab === 2
-                                ? 'border-primary-500 text-primary-400'
-                                : 'border-transparent text-surface-400 hover:text-surface-200'
-                        "
-                        @click="activeTab = 2"
-                    >
-                        Headers
+                        <i :class="editMode ? 'fas fa-eye' : 'fas fa-edit'"></i>
+                        {{ editMode ? "Dump" : "Edit" }}
                     </button>
                 </div>
             </div>
 
-            <!-- Tab Content - Flexible height -->
+            <!-- Content - Flexible height -->
             <div class="flex-1 min-h-0 overflow-auto p-2">
-                <!-- Hex Dump Tab -->
-                <div v-if="activeTab === 0" class="h-full">
-                    <pre
-                        class="bg-surface-900 p-3 rounded text-xs text-surface-300 font-mono whitespace-pre overflow-auto h-full"
-                        >{{ hexDump }}</pre
-                    >
-                </div>
-
-                <!-- Hex Editor Tab -->
-                <div v-if="activeTab === 1" class="h-full">
+                <!-- Hex Editor Mode -->
+                <div v-if="editMode" class="h-full">
                     <HexView
                         :modelValue="rawData"
                         :isEditable="true"
@@ -227,37 +215,12 @@ const hasImportantHeaders = computed(() => {
                     />
                 </div>
 
-                <!-- Headers Tab -->
-                <div
-                    v-if="activeTab === 2 && hasImportantHeaders"
-                    class="space-y-2"
-                >
-                    <div
-                        v-for="(value, name) in parsedHttp?.headers"
-                        :key="String(name)"
-                        v-show="
-                            typeof name === 'string' &&
-                            [
-                                'content-type',
-                                'content-length',
-                                'transfer-encoding',
-                            ].some((h) =>
-                                String(name).toLowerCase().includes(h),
-                            )
-                        "
-                        class="border border-surface-600 rounded p-3 bg-surface-900"
+                <!-- Hex Dump Mode -->
+                <div v-else class="h-full">
+                    <pre
+                        class="bg-surface-900 p-3 rounded text-xs text-surface-300 font-mono whitespace-pre overflow-auto h-full"
+                        >{{ hexDump }}</pre
                     >
-                        <div class="flex items-center justify-between mb-2">
-                            <span
-                                class="text-sm font-medium text-surface-200"
-                                >{{ name }}</span
-                            >
-                        </div>
-                        <pre
-                            class="bg-surface-800 p-2 rounded text-xs text-surface-300 break-all font-mono"
-                            >{{ value }}</pre
-                        >
-                    </div>
                 </div>
             </div>
 
