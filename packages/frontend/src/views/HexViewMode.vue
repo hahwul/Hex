@@ -22,7 +22,18 @@ const modalState = reactive({
 // Edit mode removed, using per-line editing
 
 // Get raw data from request or response
-const raw = computed(() => props.request?.raw || props.response?.raw || "");
+const raw = computed(() => {
+    if (isReplayTab.value && isRequest.value) {
+        const editor = props.sdk.window?.getActiveEditor?.();
+        if (editor) {
+            const editorView = editor.getEditorView();
+            if (editorView) {
+                return editorView.state.doc.toString();
+            }
+        }
+    }
+    return props.request?.raw || props.response?.raw || "";
+});
 
 // Determine if it's a request or response
 const isRequest = computed(() => !!props.request);
@@ -259,9 +270,6 @@ const saveChanges = async () => {
                 });
             }
         }
-
-        // Manually refresh hex viewer display to show saved state
-        refreshHexDisplay();
 
         props.sdk.window?.showToast?.("Request updated successfully", {
             variant: "success",
