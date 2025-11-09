@@ -21,6 +21,9 @@ const modalState = reactive({
 
 // Edit mode removed, using per-line editing
 
+// Flag to prevent watch from overwriting during save
+const isSaving = ref(false);
+
 // Get raw data from request or response
 const raw = computed(() => props.request?.raw || props.response?.raw || "");
 
@@ -104,6 +107,9 @@ const rawData = ref<Uint8Array>(new Uint8Array());
 watch(
     raw,
     (newRaw) => {
+        // Don't overwrite if we're in the middle of saving
+        if (isSaving.value) return;
+
         try {
             if (!newRaw) {
                 rawData.value = new Uint8Array();
@@ -209,6 +215,9 @@ const saveChanges = async () => {
     if (!isReplayTab.value) return; // Only in Replay tab
 
     try {
+        // Set flag to prevent watch from overwriting
+        isSaving.value = true;
+
         // Convert rawData back to string
         const decoder = new TextDecoder();
         const newRaw = decoder.decode(rawData.value);
@@ -233,7 +242,13 @@ const saveChanges = async () => {
         props.sdk.window?.showToast?.("Request updated successfully", {
             variant: "success",
         });
+
+        // Reset flag after a short delay to allow editor update to propagate
+        setTimeout(() => {
+            isSaving.value = false;
+        }, 100);
     } catch (error: unknown) {
+        isSaving.value = false; // Reset flag on error
         console.error("[Hex View Mode] Failed to update request:", error);
         const errorMessage =
             error instanceof Error ? error.message : "Unknown error";
