@@ -16,6 +16,9 @@ const raw = computed(() => props.request?.raw || props.response?.raw || "");
 // Determine if it's a request or response
 const isRequest = computed(() => !!props.request);
 
+// Determine if it's in Replay tab (where editing is allowed)
+const isReplayTab = computed(() => window.location.hash.includes("/replay"));
+
 // Parse HTTP raw data
 const parseHttpRaw = (raw: string) => {
     if (!raw) return null;
@@ -180,7 +183,7 @@ const saveChanges = async () => {
                         }}</span
                     >
                 </div>
-                <div class="flex gap-1">
+                <div v-if="isReplayTab" class="flex gap-1">
                     <button
                         v-if="isRequest"
                         class="px-3 py-1 text-xs rounded hover:bg-surface-700 text-primary-400"

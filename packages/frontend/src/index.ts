@@ -36,14 +36,6 @@ export const init = (sdk: FrontendSDK) => {
     condition,
   });
 
-  sdk.replay?.addResponseViewMode({
-    label: "Hex",
-    view: {
-      component: HexViewMode,
-    },
-    condition,
-  });
-
   sdk.search?.addRequestViewMode({
     label: "Hex",
     view: {
@@ -52,23 +44,7 @@ export const init = (sdk: FrontendSDK) => {
     condition,
   });
 
-  sdk.search?.addResponseViewMode({
-    label: "Hex",
-    view: {
-      component: HexViewMode,
-    },
-    condition,
-  });
-
   sdk.sitemap?.addRequestViewMode({
-    label: "Hex",
-    view: {
-      component: HexViewMode,
-    },
-    condition,
-  });
-
-  sdk.sitemap?.addResponseViewMode({
     label: "Hex",
     view: {
       component: HexViewMode,
