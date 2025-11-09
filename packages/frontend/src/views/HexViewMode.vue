@@ -203,27 +203,59 @@ const isTruncated = computed(() => {
 
 // Edit mode is now controlled by double-click
 
-// Save changes (for Reply tab only)
+// Save changes (for Replay tab only)
 const saveChanges = async () => {
     if (!isRequest.value) return; // Only for requests
+    if (!isReplayTab.value) return; // Only in Replay tab
 
     try {
         // Convert rawData back to string
         const decoder = new TextDecoder();
         const newRaw = decoder.decode(rawData.value);
 
-        // Update the request via GraphQL mutate
-        await props.sdk.graphql.mutate("updateRequest", {
-            id: props.request.id,
-            raw: newRaw,
+        // Get the active replay session ID
+        const tabs = props.sdk.replay?.getTabs?.() || [];
+        if (tabs.length === 0) {
+            props.sdk.window?.showToast?.("No active replay session found", {
+                variant: "error",
+            });
+            return;
+        }
+
+        // Use the first active tab's session ID
+        const sessionId = tabs[0].sessionId;
+
+        // Prepare connection info from request
+        const connection = {
+            host: props.request.host,
+            port: props.request.port,
+            isTLS: props.request.isTls,
+            SNI: props.request.sni || props.request.host,
+        };
+
+        // Start a new replay task with modified request
+        await props.sdk.graphql.startReplayTask({
+            sessionId,
+            input: {
+                raw: newRaw,
+                connection,
+                settings: {},
+            },
         });
-        props.sdk.window?.showToast?.("Request updated successfully", {
+
+        props.sdk.window?.showToast?.("Request sent successfully", {
             variant: "success",
         });
-    } catch (error) {
-        props.sdk.window?.showToast?.("Failed to update request", {
-            variant: "error",
-        });
+    } catch (error: unknown) {
+        console.error("[Hex View Mode] Failed to send request:", error);
+        const errorMessage =
+            error instanceof Error ? error.message : "Unknown error";
+        props.sdk.window?.showToast?.(
+            `Failed to send request: ${errorMessage}`,
+            {
+                variant: "error",
+            },
+        );
     }
 };
 </script>

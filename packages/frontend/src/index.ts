@@ -3,18 +3,6 @@ import type { FrontendSDK } from "./types";
 
 import "./styles/index.css";
 
-// Parse HTTP raw data to check for body
-const parseHttpRaw = (raw: string) => {
-  if (!raw) return null;
-
-  const parts = raw.split("\r\n\r\n");
-  if (parts.length < 2) return null;
-
-  const body = parts.slice(1).join("\r\n\r\n");
-
-  return { body };
-};
-
 export const init = (sdk: FrontendSDK) => {
   const condition = (data: any): boolean => {
     return !!data?.raw; // Show Hex ViewMode only when raw data exists

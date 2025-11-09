@@ -1,4 +1,3 @@
-Hex / packages / frontend / src / types.ts;
 import type { Caido } from "@caido/sdk-frontend";
 import { type API } from "backend";
 
