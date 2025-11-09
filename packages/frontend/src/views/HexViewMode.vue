@@ -212,19 +212,14 @@ const saveChanges = async () => {
         const decoder = new TextDecoder();
         const newRaw = decoder.decode(rawData.value);
 
-        // Update the request via SDK (assuming API exists)
-        // This is a placeholder - actual implementation depends on Caido SDK
-        if (props.sdk?.replay?.updateRequest) {
-            await props.sdk.replay.updateRequest(props.request.id, newRaw);
-            props.sdk.window?.showToast?.("Request updated successfully", {
-                variant: "success",
-            });
-        } else {
-            props.sdk.window?.showToast?.(
-                "Update not supported in this context",
-                { variant: "warning" },
-            );
-        }
+        // Update the request via GraphQL mutate
+        await props.sdk.graphql.mutate("updateRequest", {
+            id: props.request.id,
+            raw: newRaw,
+        });
+        props.sdk.window?.showToast?.("Request updated successfully", {
+            variant: "success",
+        });
     } catch (error) {
         props.sdk.window?.showToast?.("Failed to update request", {
             variant: "error",
