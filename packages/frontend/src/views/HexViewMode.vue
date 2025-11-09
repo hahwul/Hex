@@ -1,6 +1,38 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
 
+const columnWidths = reactive({ offset: 80, hex: 288, ascii: 160 });
+
+let isResizing = false;
+let currentColumn = "";
+let startX = 0;
+let startWidth = 0;
+
+const startResize = (column: string, event: MouseEvent) => {
+    isResizing = true;
+    currentColumn = column;
+    startX = event.clientX;
+    startWidth = columnWidths[column as keyof typeof columnWidths];
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+};
+
+const onMouseMove = (event: MouseEvent) => {
+    if (!isResizing) return;
+    const deltaX = event.clientX - startX;
+    columnWidths[currentColumn as keyof typeof columnWidths] = Math.max(
+        50,
+        startWidth + deltaX,
+    );
+};
+
+const onMouseUp = () => {
+    isResizing = false;
+    currentColumn = "";
+    document.removeEventListener("mousemove", onMouseMove);
+    document.removeEventListener("mouseup", onMouseUp);
+};
+
 const props = defineProps<{
     sdk: any;
     request?: any;
@@ -338,12 +370,22 @@ const saveChanges = async () => {
                                 class="hover:bg-surface-700"
                             >
                                 <td
-                                    class="px-2 py-1 text-surface-400 w-20 border-r border-surface-600"
+                                    class="px-2 py-1 text-surface-400 border-r border-surface-600 relative"
+                                    :style="{
+                                        width: columnWidths.offset + 'px',
+                                    }"
                                 >
                                     {{ line.offset }}
+                                    <div
+                                        class="absolute right-0 top-0 bottom-0 w-1 bg-surface-600 cursor-col-resize"
+                                        @mousedown="
+                                            startResize('offset', $event)
+                                        "
+                                    ></div>
                                 </td>
                                 <td
-                                    class="px-2 py-1 w-72 border-r border-surface-600"
+                                    class="px-2 py-1 border-r border-surface-600 relative"
+                                    :style="{ width: columnWidths.hex + 'px' }"
                                 >
                                     <input
                                         :value="line.hex"
@@ -351,8 +393,17 @@ const saveChanges = async () => {
                                         @dblclick="openEditModal(line)"
                                         class="w-full bg-transparent text-surface-300 border-none outline-none cursor-pointer"
                                     />
+                                    <div
+                                        class="absolute right-0 top-0 bottom-0 w-1 bg-surface-600 cursor-col-resize"
+                                        @mousedown="startResize('hex', $event)"
+                                    ></div>
                                 </td>
-                                <td class="px-2 py-1 text-surface-300 w-40">
+                                <td
+                                    class="px-2 py-1 text-surface-300"
+                                    :style="{
+                                        width: columnWidths.ascii + 'px',
+                                    }"
+                                >
                                     {{ line.ascii }}
                                 </td>
                             </tr>
