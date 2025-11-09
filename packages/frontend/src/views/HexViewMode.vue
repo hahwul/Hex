@@ -213,53 +213,32 @@ const saveChanges = async () => {
         const decoder = new TextDecoder();
         const newRaw = decoder.decode(rawData.value);
 
-        // Get the active replay session ID
-        const tabs = props.sdk.replay?.getTabs?.() || [];
-        if (tabs.length === 0) {
-            props.sdk.window?.showToast?.("No active replay session found", {
-                variant: "error",
-            });
-            return;
+        // Get the active editor and update its content
+        const editor = props.sdk.window?.getActiveEditor?.();
+        if (editor) {
+            // Get the current editor view to update the content
+            const editorView = editor.getEditorView();
+            if (editorView) {
+                // Replace the entire editor content with the modified raw data
+                editorView.dispatch({
+                    changes: {
+                        from: 0,
+                        to: editorView.state.doc.length,
+                        insert: newRaw,
+                    },
+                });
+            }
         }
 
-        // Use the first active tab's session ID
-        const sessionId = tabs[0].sessionId;
-
-        // Prepare connection info from request
-        const connection = {
-            host: props.request.host,
-            port: props.request.port,
-            isTLS: props.request.isTls,
-            SNI: props.request.sni || props.request.host,
-        };
-
-        // Start a new replay task with modified request
-        const result = await props.sdk.graphql.startReplayTask({
-            sessionId,
-            input: {
-                raw: newRaw,
-                connection,
-                settings: {},
-            },
-        });
-
-        // Set the new replay entry as active so changes are visible
-        if (result?.startReplayTask?.task?.replayEntry?.id) {
-            await props.sdk.graphql.setActiveReplaySessionEntry({
-                id: sessionId,
-                entryId: result.startReplayTask.task.replayEntry.id,
-            });
-        }
-
-        props.sdk.window?.showToast?.("Request sent successfully", {
+        props.sdk.window?.showToast?.("Request updated successfully", {
             variant: "success",
         });
     } catch (error: unknown) {
-        console.error("[Hex View Mode] Failed to send request:", error);
+        console.error("[Hex View Mode] Failed to update request:", error);
         const errorMessage =
             error instanceof Error ? error.message : "Unknown error";
         props.sdk.window?.showToast?.(
-            `Failed to send request: ${errorMessage}`,
+            `Failed to update request: ${errorMessage}`,
             {
                 variant: "error",
             },
