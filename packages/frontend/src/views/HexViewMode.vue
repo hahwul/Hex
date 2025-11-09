@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import HexView from "./HexView.vue";
 
 const props = defineProps<{
     sdk: any;
@@ -63,6 +62,9 @@ const parsedHttp = computed(() => {
 // Raw data as ref for editing
 const rawData = ref<Uint8Array>(new Uint8Array());
 
+// Editable hex string for edit mode
+const editableHex = ref("");
+
 // Initialize and watch for raw data changes
 watch(
     raw,
@@ -70,6 +72,7 @@ watch(
         try {
             if (!newRaw) {
                 rawData.value = new Uint8Array();
+                editableHex.value = "";
                 return;
             }
 
@@ -81,20 +84,37 @@ watch(
             // Assuming raw is UTF-8 encoded string, convert to Uint8Array
             const encoder = new TextEncoder();
             rawData.value = encoder.encode(rawStr);
+
+            // Update editable hex
+            editableHex.value = Array.from(rawData.value)
+                .map((b) => b.toString(16).padStart(2, "0"))
+                .join(" ");
         } catch (error) {
             console.error(
                 "[Hex View Mode] Error converting raw to Uint8Array:",
                 error,
             );
             rawData.value = new Uint8Array();
+            editableHex.value = "";
         }
     },
     { immediate: true },
 );
 
-// Update raw data from editor
-const updateRawData = (newData: Uint8Array) => {
-    rawData.value = newData;
+// Update rawData from editable hex
+const updateFromHex = () => {
+    try {
+        const hex = editableHex.value.replace(/\s+/g, "");
+        const bytes: number[] = [];
+        for (let i = 0; i < hex.length; i += 2) {
+            const byte = parseInt(hex.substr(i, 2), 16);
+            if (isNaN(byte)) continue;
+            bytes.push(byte);
+        }
+        rawData.value = new Uint8Array(bytes);
+    } catch (error) {
+        console.error("[Hex View Mode] Error parsing hex string:", error);
+    }
 };
 
 // Generate Hex Dump
@@ -119,7 +139,8 @@ const hexDump = computed(() => {
 
 // Check if data is truncated
 const isTruncated = computed(() => {
-    return raw.value && raw.value.length > 10240;
+    const raw = props?.request?.raw;
+    return raw && raw.length > 10240;
 });
 
 // Toggle edit mode
@@ -211,11 +232,12 @@ const saveChanges = async () => {
             <div class="flex-1 min-h-0 overflow-auto p-2">
                 <!-- Hex Editor Mode -->
                 <div v-if="editMode" class="h-full">
-                    <HexView
-                        :modelValue="rawData"
-                        :isEditable="true"
-                        @update:modelValue="updateRawData"
-                    />
+                    <textarea
+                        v-model="editableHex"
+                        @input="updateFromHex"
+                        class="w-full h-full bg-surface-900 p-3 rounded text-xs text-surface-300 font-mono resize-none border border-surface-600"
+                        placeholder="Enter hex values (e.g., 48 65 6c 6c 6f)"
+                    ></textarea>
                 </div>
 
                 <!-- Hex Dump Mode -->
