@@ -1,7 +1,5 @@
-Hex/packages/frontend/src/views/HexViewMode.vue
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import HexView from "./HexView.vue";
 
 const props = defineProps<{
     sdk: any;
@@ -51,30 +49,55 @@ const parsedHttp = computed(() => {
     }
 });
 
-// Convert body to Uint8Array for hex viewing
-const bodyData = computed(() => {
+// Convert entire raw request to Uint8Array for hex dump, with size limit
+const rawData = computed(() => {
     try {
-        const parsed = parsedHttp.value;
-        if (!parsed?.body) return new Uint8Array();
+        const raw = props?.request?.raw;
+        if (!raw) return new Uint8Array();
 
-        // Assuming body is UTF-8 encoded string, convert to Uint8Array
+        // Size limit: 10KB
+        const maxSize = 10240;
+        const rawStr = raw.length > maxSize ? raw.substring(0, maxSize) : raw;
+
+        // Assuming raw is UTF-8 encoded string, convert to Uint8Array
         const encoder = new TextEncoder();
-        return encoder.encode(parsed.body);
+        return encoder.encode(rawStr);
     } catch (error) {
         console.error(
-            "[Hex View Mode] Error converting body to Uint8Array:",
+            "[Hex View Mode] Error converting raw to Uint8Array:",
             error,
         );
         return new Uint8Array();
     }
 });
 
-// Check if this request has a body
-const hasBody = computed(() => {
-    return bodyData.value.length > 0;
+// Generate Hex Dump
+const hexDump = computed(() => {
+    const data = rawData.value;
+    if (data.length === 0) return "No data to display";
+
+    let result = "";
+    for (let i = 0; i < data.length; i += 16) {
+        const chunk = data.slice(i, i + 16);
+        const offset = i.toString(16).padStart(8, "0");
+        const hex = Array.from(chunk)
+            .map((b) => b.toString(16).padStart(2, "0"))
+            .join(" ");
+        const ascii = Array.from(chunk)
+            .map((b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : "."))
+            .join("");
+        result += `${offset}  ${hex.padEnd(48)}  ${ascii}\n`;
+    }
+    return result;
 });
 
-// Check for important headers (similar to JWT)
+// Check if data is truncated
+const isTruncated = computed(() => {
+    const raw = props?.request?.raw;
+    return raw && raw.length > 10240;
+});
+
+// Check for important headers
 const hasImportantHeaders = computed(() => {
     try {
         if (!parsedHttp.value?.headers) return false;
@@ -97,7 +120,7 @@ const hasImportantHeaders = computed(() => {
 
 <template>
     <div class="h-full flex flex-col bg-surface-800">
-        <div v-if="hasBody" class="h-full flex flex-col">
+        <div class="h-full flex flex-col">
             <!-- Clean Action Toolbar -->
             <div
                 class="flex items-center justify-between p-2 border-b border-surface-600"
@@ -111,7 +134,9 @@ const hasImportantHeaders = computed(() => {
                     >
                     <span
                         class="text-xs bg-primary-600 text-primary-100 px-2 py-0.5 rounded"
-                        >{{ bodyData.length }} bytes</span
+                        >{{ rawData.length }} bytes{{
+                            isTruncated ? " (truncated)" : ""
+                        }}</span
                     >
                 </div>
             </div>
@@ -128,7 +153,7 @@ const hasImportantHeaders = computed(() => {
                         "
                         @click="activeTab = 0"
                     >
-                        Hex View
+                        Hex Dump
                     </button>
                     <button
                         v-if="hasImportantHeaders"
@@ -147,9 +172,12 @@ const hasImportantHeaders = computed(() => {
 
             <!-- Tab Content - Flexible height -->
             <div class="flex-1 min-h-0 overflow-auto p-2">
-                <!-- Hex View Tab -->
+                <!-- Hex Dump Tab -->
                 <div v-if="activeTab === 0" class="h-full">
-                    <HexView :modelValue="bodyData" :isEditable="false" />
+                    <pre
+                        class="bg-surface-900 p-3 rounded text-xs text-surface-300 font-mono whitespace-pre overflow-auto h-full"
+                        >{{ hexDump }}</pre
+                    >
                 </div>
 
                 <!-- Headers Tab -->
@@ -197,28 +225,11 @@ const hasImportantHeaders = computed(() => {
                     </span>
                     <span class="flex items-center gap-1">
                         <i class="fas fa-file"></i>
-                        {{ bodyData.length }} bytes
+                        {{ rawData.length }} bytes
                     </span>
                 </div>
                 <div class="text-primary-400 font-medium">HEX</div>
             </div>
-        </div>
-
-        <!-- No Body Found State -->
-        <div
-            v-else
-            class="h-full flex flex-col items-center justify-center text-center p-4"
-        >
-            <div class="text-surface-400 mb-4">
-                <i class="fas fa-hexagon text-4xl mb-3"></i>
-            </div>
-            <h3 class="text-lg font-semibold text-surface-200 mb-2">
-                No Body Data Found
-            </h3>
-            <p class="text-surface-400 text-sm max-w-md">
-                This request doesn't appear to contain any body data to display
-                in hex format.
-            </p>
         </div>
     </div>
 </template>

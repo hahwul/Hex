@@ -17,9 +17,7 @@ const parseHttpRaw = (raw: string) => {
 
 export const init = (sdk: FrontendSDK) => {
   const condition = (request: any): boolean => {
-    if (!request.raw) return false;
-    const parsed = parseHttpRaw(request.raw);
-    return !!(parsed && parsed.body && parsed.body.length > 0);
+    return true; // Show Hex ViewMode for all requests
   };
 
   sdk.httpHistory?.addRequestViewMode({
