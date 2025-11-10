@@ -36,4 +36,4 @@ This plugin was created as a temporary convenience tool until official support f
 Until then, feel free to use it to improve your workflow!
 
 ## Special Thanks
-To Michael([@dyrandy](https://github.com/dyrandy)), whose quiet persistence finally won. This plugin’s here because you asked nicely... a lot. 😉
+To Michael([@dyrandy](https://github.com/dyrandy)), whose quiet persistence finally won. This plugin’s here because you asked nicely.. a lot. 😉
