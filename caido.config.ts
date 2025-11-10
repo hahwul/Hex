@@ -7,12 +7,12 @@ import tailwindCaido from "@caido/tailwindcss";
 import path from "path";
 import prefixwrap from "postcss-prefixwrap";
 
-const id = "frontend-vue";
+const id = "hex";
 export default defineConfig({
   id,
   name: "Hex",
   description: "Hex Viewer and Editor",
-  version: "0.1.0",
+  version: "0.1.1",
   author: {
     name: "hahwul",
     email: "hahwul@gmail.com",
