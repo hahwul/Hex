@@ -1,6 +1,6 @@
 # Hex
 
-Hex Viewer & Editor Plugin for [Caido](https://caido.io/)
+A Hex Viewer & Editor plugin for [Caido](https://caido.io/) that adds hex viewing and editing to the History and Replay tabs.
 
 ![](images/screenshot.jpg)
 
