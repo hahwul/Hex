@@ -29,5 +29,11 @@ pnpm install
 pnpm build
 ```
 
+## Important Note
+
+This plugin was created as a temporary convenience tool until official support for **Hex View** and **Edit** features is implemented in Caido. Once the related issue is resolved (see [caido/caido#29](https://github.com/caido/caido/issues/29)), this plugin will likely become unnecessary.
+
+Until then, feel free to use it to improve your workflow!
+
 ## Special Thanks
 To Michael([@dyrandy](https://github.com/dyrandy)), whose quiet persistence finally won. This plugin’s here because you asked nicely... a lot. 😉
