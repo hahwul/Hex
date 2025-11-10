@@ -1,6 +1,5 @@
-import HexViewMode from "./views/HexViewMode.vue";
 import type { FrontendSDK } from "./types";
-
+import HexViewMode from "./views/HexViewMode.vue";
 import "./styles/index.css";
 
 export const init = (sdk: FrontendSDK) => {
