@@ -210,20 +210,23 @@ const parsedHttp = computed(() => {
 // Raw data as ref for editing
 const rawData = ref<Uint8Array>(new Uint8Array());
 
+// State to track whether to show all data or truncated data
+const showAllData = ref(false);
+
 // Initialize and watch for raw data changes
 watch(
-    raw,
-    (newRaw) => {
+    [raw, showAllData],
+    ([newRaw, showAll]) => {
         try {
             if (!newRaw) {
                 rawData.value = new Uint8Array();
                 return;
             }
 
-            // Size limit: 10KB
+            // Size limit: 10KB (when not showing all)
             const maxSize = 10240;
             const rawStr =
-                newRaw.length > maxSize ? newRaw.substring(0, maxSize) : newRaw;
+                !showAll && newRaw.length > maxSize ? newRaw.substring(0, maxSize) : newRaw;
 
             // Assuming raw is UTF-8 encoded string, convert to Uint8Array
             const encoder = new TextEncoder();
@@ -307,8 +310,8 @@ const updateLine = (line: {
 
 // Check if data is truncated
 const isTruncated = computed(() => {
-    const raw = props?.request?.raw;
-    return raw && raw.length > 10240;
+    const rawStr = props?.request?.raw || props?.response?.raw || "";
+    return rawStr && rawStr.length > 10240;
 });
 
 // Calculate diff between original and current hex values
@@ -497,6 +500,22 @@ const saveChanges = async () => {
                         <i class="fas fa-file"></i>
                         {{ rawData.length }} bytes
                     </span>
+                    <button
+                        v-if="isTruncated && !showAllData"
+                        @click="showAllData = true"
+                        class="px-2 py-0.5 text-xs rounded bg-primary-600 text-primary-100 hover:bg-primary-500"
+                        title="Show all data"
+                    >
+                        <i class="fas fa-expand-alt"></i> Show All
+                    </button>
+                    <button
+                        v-if="isTruncated && showAllData"
+                        @click="showAllData = false"
+                        class="px-2 py-0.5 text-xs rounded bg-surface-600 text-surface-300 hover:bg-surface-500"
+                        title="Show truncated data"
+                    >
+                        <i class="fas fa-compress-alt"></i> Show Less
+                    </button>
                 </div>
                 <div class="text-primary-400 font-medium">HEX</div>
             </div>
