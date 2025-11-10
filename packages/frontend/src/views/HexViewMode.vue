@@ -50,6 +50,8 @@ const modalState = reactive({
     } | null,
     currentHex: "",
     originalHex: "",
+    currentAscii: "",
+    originalAscii: "",
 });
 
 // Edit mode removed, using per-line editing
@@ -84,7 +86,52 @@ const openEditModal = (line: {
     modalState.currentLine = line;
     modalState.currentHex = line.hex;
     modalState.originalHex = line.hex;
+    modalState.currentAscii = hexToAscii(line.hex);
+    modalState.originalAscii = hexToAscii(line.hex);
     modalState.showModal = true;
+};
+
+// Convert hex string to ASCII string
+const hexToAscii = (hex: string): string => {
+    const hexParts = hex.split(" ").filter((h) => h.length === 2);
+    const bytes = hexParts.map((h) => parseInt(h, 16)).filter((b) => !isNaN(b));
+    return bytes
+        .map((b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : "."))
+        .join("");
+};
+
+// Convert ASCII string to hex string
+const asciiToHex = (ascii: string): string => {
+    const bytes: number[] = [];
+    for (let i = 0; i < ascii.length; i++) {
+        const char = ascii[i];
+        if (!char) continue; // Skip undefined characters
+        if (char === ".") {
+            // Keep original byte for "." placeholders if available
+            const originalBytes = modalState.originalHex.split(" ").filter((h) => h.length === 2);
+            if (i < originalBytes.length) {
+                const originalByte = originalBytes[i];
+                if (originalByte) {
+                    bytes.push(parseInt(originalByte, 16));
+                }
+            } else {
+                bytes.push(46); // ASCII code for "."
+            }
+        } else {
+            bytes.push(char.charCodeAt(0));
+        }
+    }
+    return bytes.map((b) => b.toString(16).padStart(2, "0")).join(" ");
+};
+
+// Update hex when ASCII changes
+const updateHexFromAscii = () => {
+    modalState.currentHex = asciiToHex(modalState.currentAscii);
+};
+
+// Update ASCII when hex changes
+const updateAsciiFromHex = () => {
+    modalState.currentAscii = hexToAscii(modalState.currentHex);
 };
 
 // Apply changes from modal
@@ -435,45 +482,66 @@ const saveChanges = async () => {
         class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
     >
         <div
-            class="bg-surface-800 p-6 rounded-lg shadow-lg max-w-2xl w-full mx-4"
+            class="bg-surface-800 p-6 rounded-lg shadow-lg max-w-5xl w-full mx-4"
         >
             <h3 class="text-lg font-semibold text-surface-200 mb-4">
                 Edit Hex Values
             </h3>
+            
+            <!-- Three Column Layout: Original, Diff, ASCII Preview -->
+            <div class="grid grid-cols-3 gap-4 mb-4">
+                <!-- Original Hex -->
+                <div>
+                    <label class="block text-sm text-surface-300 mb-2">Original:</label>
+                    <div class="bg-surface-900 text-surface-400 p-3 rounded border border-surface-600 font-mono text-sm h-48 overflow-auto">
+                        {{ modalState.originalHex }}
+                    </div>
+                </div>
+                
+                <!-- Diff Display -->
+                <div>
+                    <label class="block text-sm text-surface-300 mb-2">Changes:</label>
+                    <div class="bg-surface-900 p-3 rounded border border-surface-600 h-48 overflow-auto">
+                        <div v-if="hexDiff.some(d => d.changed)" class="flex flex-wrap gap-1 font-mono text-xs">
+                            <template v-for="item in hexDiff" :key="item.index">
+                                <span
+                                    v-if="item.changed"
+                                    class="inline-flex flex-col items-center"
+                                >
+                                    <span class="text-red-400 line-through">{{ item.original || '  ' }}</span>
+                                    <span class="text-green-400">{{ item.current || '  ' }}</span>
+                                </span>
+                                <span
+                                    v-else
+                                    class="text-surface-500"
+                                >{{ item.original }}</span>
+                            </template>
+                        </div>
+                        <p v-else class="text-sm text-surface-400 italic">No changes detected</p>
+                    </div>
+                </div>
+                
+                <!-- ASCII Preview (Editable) -->
+                <div>
+                    <label class="block text-sm text-surface-300 mb-2">ASCII Preview:</label>
+                    <textarea
+                        v-model="modalState.currentAscii"
+                        @input="updateHexFromAscii"
+                        class="w-full h-48 bg-surface-900 text-surface-300 p-3 rounded border border-surface-600 font-mono text-sm resize-none"
+                        placeholder="ASCII representation"
+                    ></textarea>
+                </div>
+            </div>
             
             <!-- Hex Input -->
             <div class="mb-4">
                 <label class="block text-sm text-surface-300 mb-2">Hex Values:</label>
                 <textarea
                     v-model="modalState.currentHex"
+                    @input="updateAsciiFromHex"
                     class="w-full h-32 bg-surface-900 text-surface-300 p-3 rounded border border-surface-600 font-mono text-sm resize-none"
                     placeholder="Enter hex values (e.g., 48 65 6c 6c 6f)"
                 ></textarea>
-            </div>
-            
-            <!-- Diff Display -->
-            <div v-if="hexDiff.some(d => d.changed)" class="mb-4">
-                <label class="block text-sm text-surface-300 mb-2">Changes:</label>
-                <div class="bg-surface-900 p-3 rounded border border-surface-600 max-h-48 overflow-auto">
-                    <div class="flex flex-wrap gap-1 font-mono text-xs">
-                        <template v-for="item in hexDiff" :key="item.index">
-                            <span
-                                v-if="item.changed"
-                                class="inline-flex flex-col items-center"
-                            >
-                                <span class="text-red-400 line-through">{{ item.original || '  ' }}</span>
-                                <span class="text-green-400">{{ item.current || '  ' }}</span>
-                            </span>
-                            <span
-                                v-else
-                                class="text-surface-500"
-                            >{{ item.original }}</span>
-                        </template>
-                    </div>
-                </div>
-            </div>
-            <div v-else class="mb-4">
-                <p class="text-sm text-surface-400 italic">No changes detected</p>
             </div>
             
             <div class="flex justify-end gap-2">
