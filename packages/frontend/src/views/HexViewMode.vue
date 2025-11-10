@@ -108,7 +108,9 @@ const asciiToHex = (ascii: string): string => {
         if (!char) continue; // Skip undefined characters
         if (char === ".") {
             // Keep original byte for "." placeholders if available
-            const originalBytes = modalState.originalHex.split(" ").filter((h) => h.length === 2);
+            const originalBytes = modalState.originalHex
+                .split(" ")
+                .filter((h) => h.length === 2);
             if (i < originalBytes.length) {
                 const originalByte = originalBytes[i];
                 if (originalByte) {
@@ -295,12 +297,21 @@ const isTruncated = computed(() => {
 
 // Calculate diff between original and current hex values
 const hexDiff = computed(() => {
-    const original = modalState.originalHex.split(" ").filter((h) => h.length === 2);
-    const current = modalState.currentHex.split(" ").filter((h) => h.length === 2);
+    const original = modalState.originalHex
+        .split(" ")
+        .filter((h) => h.length === 2);
+    const current = modalState.currentHex
+        .split(" ")
+        .filter((h) => h.length === 2);
     const maxLength = Math.max(original.length, current.length);
-    
-    const diff: Array<{ index: number; original: string; current: string; changed: boolean }> = [];
-    
+
+    const diff: Array<{
+        index: number;
+        original: string;
+        current: string;
+        changed: boolean;
+    }> = [];
+
     for (let i = 0; i < maxLength; i++) {
         const orig = original[i] || "";
         const curr = current[i] || "";
@@ -311,7 +322,7 @@ const hexDiff = computed(() => {
             changed: orig !== curr,
         });
     }
-    
+
     return diff;
 });
 
@@ -487,43 +498,74 @@ const saveChanges = async () => {
             <h3 class="text-lg font-semibold text-surface-200 mb-4">
                 Edit Hex Values
             </h3>
-            
+
+            <!-- Hex Input -->
+            <div class="mb-4">
+                <label class="block text-sm text-surface-300 mb-2"
+                    >Editor:</label
+                >
+                <textarea
+                    v-model="modalState.currentHex"
+                    @input="updateAsciiFromHex"
+                    class="w-full h-32 bg-surface-900 text-surface-300 p-3 rounded border border-surface-600 font-mono text-sm resize-none"
+                    placeholder="Enter hex values (e.g., 48 65 6c 6c 6f)"
+                ></textarea>
+            </div>
+
             <!-- Three Column Layout: Original, Diff, ASCII Preview -->
             <div class="grid grid-cols-3 gap-4 mb-4">
                 <!-- Original Hex -->
                 <div>
-                    <label class="block text-sm text-surface-300 mb-2">Original:</label>
-                    <div class="bg-surface-900 text-surface-400 p-3 rounded border border-surface-600 font-mono text-sm h-48 overflow-auto">
+                    <label class="block text-sm text-surface-300 mb-2"
+                        >Original:</label
+                    >
+                    <div
+                        class="bg-surface-900 text-surface-400 p-3 rounded border border-surface-600 font-mono text-sm h-48 overflow-auto"
+                    >
                         {{ modalState.originalHex }}
                     </div>
                 </div>
-                
+
                 <!-- Diff Display -->
                 <div>
-                    <label class="block text-sm text-surface-300 mb-2">Changes:</label>
-                    <div class="bg-surface-900 p-3 rounded border border-surface-600 h-48 overflow-auto">
-                        <div v-if="hexDiff.some(d => d.changed)" class="flex flex-wrap gap-1 font-mono text-xs">
+                    <label class="block text-sm text-surface-300 mb-2"
+                        >Changes:</label
+                    >
+                    <div
+                        class="bg-surface-900 p-3 rounded border border-surface-600 h-48 overflow-auto"
+                    >
+                        <div
+                            v-if="hexDiff.some((d) => d.changed)"
+                            class="flex flex-wrap gap-1 font-mono text-xs"
+                        >
                             <template v-for="item in hexDiff" :key="item.index">
                                 <span
                                     v-if="item.changed"
                                     class="inline-flex flex-col items-center"
                                 >
-                                    <span class="text-red-400 line-through">{{ item.original || '  ' }}</span>
-                                    <span class="text-green-400">{{ item.current || '  ' }}</span>
+                                    <span class="text-red-400 line-through">{{
+                                        item.original || "  "
+                                    }}</span>
+                                    <span class="text-green-400">{{
+                                        item.current || "  "
+                                    }}</span>
                                 </span>
-                                <span
-                                    v-else
-                                    class="text-surface-500"
-                                >{{ item.original }}</span>
+                                <span v-else class="text-surface-500">{{
+                                    item.original
+                                }}</span>
                             </template>
                         </div>
-                        <p v-else class="text-sm text-surface-400 italic">No changes detected</p>
+                        <p v-else class="text-sm text-surface-400 italic">
+                            No changes detected
+                        </p>
                     </div>
                 </div>
-                
+
                 <!-- ASCII Preview (Editable) -->
                 <div>
-                    <label class="block text-sm text-surface-300 mb-2">ASCII Preview:</label>
+                    <label class="block text-sm text-surface-300 mb-2"
+                        >ASCII Preview:</label
+                    >
                     <textarea
                         v-model="modalState.currentAscii"
                         @input="updateHexFromAscii"
@@ -532,18 +574,7 @@ const saveChanges = async () => {
                     ></textarea>
                 </div>
             </div>
-            
-            <!-- Hex Input -->
-            <div class="mb-4">
-                <label class="block text-sm text-surface-300 mb-2">Hex Values:</label>
-                <textarea
-                    v-model="modalState.currentHex"
-                    @input="updateAsciiFromHex"
-                    class="w-full h-32 bg-surface-900 text-surface-300 p-3 rounded border border-surface-600 font-mono text-sm resize-none"
-                    placeholder="Enter hex values (e.g., 48 65 6c 6c 6f)"
-                ></textarea>
-            </div>
-            
+
             <div class="flex justify-end gap-2">
                 <button
                     @click="cancelEdit"
