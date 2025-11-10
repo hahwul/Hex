@@ -49,6 +49,7 @@ const modalState = reactive({
         editing?: boolean;
     } | null,
     currentHex: "",
+    originalHex: "",
 });
 
 // Edit mode removed, using per-line editing
@@ -82,6 +83,7 @@ const openEditModal = (line: {
 }) => {
     modalState.currentLine = line;
     modalState.currentHex = line.hex;
+    modalState.originalHex = line.hex;
     modalState.showModal = true;
 };
 
@@ -238,40 +240,32 @@ const updateLine = (line: {
     rawData.value = new Uint8Array(newBytes);
 };
 
-// Helper function to manually refresh hex viewer display
-const refreshHexDisplay = () => {
-    const data = rawData.value;
-    if (data.length === 0) {
-        dumpLines.value = [
-            {
-                offset: "",
-                hex: "",
-                ascii: "No data to display",
-                editing: false,
-            },
-        ];
-        return;
-    }
-
-    const lines = [];
-    for (let i = 0; i < data.length; i += 16) {
-        const chunk = data.slice(i, i + 16);
-        const offset = i.toString(16).padStart(8, "0");
-        const hex = Array.from(chunk)
-            .map((b) => b.toString(16).padStart(2, "0"))
-            .join(" ");
-        const ascii = Array.from(chunk)
-            .map((b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : "."))
-            .join("");
-        lines.push({ offset, hex, ascii, editing: false });
-    }
-    dumpLines.value = lines;
-};
-
 // Check if data is truncated
 const isTruncated = computed(() => {
     const raw = props?.request?.raw;
     return raw && raw.length > 10240;
+});
+
+// Calculate diff between original and current hex values
+const hexDiff = computed(() => {
+    const original = modalState.originalHex.split(" ").filter((h) => h.length === 2);
+    const current = modalState.currentHex.split(" ").filter((h) => h.length === 2);
+    const maxLength = Math.max(original.length, current.length);
+    
+    const diff: Array<{ index: number; original: string; current: string; changed: boolean }> = [];
+    
+    for (let i = 0; i < maxLength; i++) {
+        const orig = original[i] || "";
+        const curr = current[i] || "";
+        diff.push({
+            index: i,
+            original: orig,
+            current: curr,
+            changed: orig !== curr,
+        });
+    }
+    
+    return diff;
 });
 
 // Edit mode is now controlled by double-click
@@ -441,17 +435,48 @@ const saveChanges = async () => {
         class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
     >
         <div
-            class="bg-surface-800 p-6 rounded-lg shadow-lg max-w-md w-full mx-4"
+            class="bg-surface-800 p-6 rounded-lg shadow-lg max-w-2xl w-full mx-4"
         >
             <h3 class="text-lg font-semibold text-surface-200 mb-4">
                 Edit Hex Values
             </h3>
-            <textarea
-                v-model="modalState.currentHex"
-                class="w-full h-32 bg-surface-900 text-surface-300 p-3 rounded border border-surface-600 font-mono text-sm resize-none"
-                placeholder="Enter hex values (e.g., 48 65 6c 6c 6f)"
-            ></textarea>
-            <div class="flex justify-end gap-2 mt-4">
+            
+            <!-- Hex Input -->
+            <div class="mb-4">
+                <label class="block text-sm text-surface-300 mb-2">Hex Values:</label>
+                <textarea
+                    v-model="modalState.currentHex"
+                    class="w-full h-32 bg-surface-900 text-surface-300 p-3 rounded border border-surface-600 font-mono text-sm resize-none"
+                    placeholder="Enter hex values (e.g., 48 65 6c 6c 6f)"
+                ></textarea>
+            </div>
+            
+            <!-- Diff Display -->
+            <div v-if="hexDiff.some(d => d.changed)" class="mb-4">
+                <label class="block text-sm text-surface-300 mb-2">Changes:</label>
+                <div class="bg-surface-900 p-3 rounded border border-surface-600 max-h-48 overflow-auto">
+                    <div class="flex flex-wrap gap-1 font-mono text-xs">
+                        <template v-for="item in hexDiff" :key="item.index">
+                            <span
+                                v-if="item.changed"
+                                class="inline-flex flex-col items-center"
+                            >
+                                <span class="text-red-400 line-through">{{ item.original || '  ' }}</span>
+                                <span class="text-green-400">{{ item.current || '  ' }}</span>
+                            </span>
+                            <span
+                                v-else
+                                class="text-surface-500"
+                            >{{ item.original }}</span>
+                        </template>
+                    </div>
+                </div>
+            </div>
+            <div v-else class="mb-4">
+                <p class="text-sm text-surface-400 italic">No changes detected</p>
+            </div>
+            
+            <div class="flex justify-end gap-2">
                 <button
                     @click="cancelEdit"
                     class="px-4 py-2 text-sm rounded bg-surface-600 text-surface-300 hover:bg-surface-500"
