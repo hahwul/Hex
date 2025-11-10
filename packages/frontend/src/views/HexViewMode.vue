@@ -58,16 +58,27 @@ const modalState = reactive({
 
 // Get raw data from request or response
 const raw = computed(() => {
+    let rawData = "";
     if (isReplayTab.value && isRequest.value) {
         const editor = props.sdk.window?.getActiveEditor?.();
         if (editor) {
             const editorView = editor.getEditorView();
             if (editorView) {
-                return editorView.state.doc.toString();
+                rawData = editorView.state.doc.toString();
             }
         }
+    } else {
+        rawData = props.request?.raw || props.response?.raw || "";
     }
-    return props.request?.raw || props.response?.raw || "";
+    
+    // Ensure proper HTTP line endings (CRLF) for requests
+    // HTTP protocol requires \r\n line endings, but editors may normalize to \n
+    if (rawData && isRequest.value) {
+        // Only convert standalone \n to \r\n (don't double-convert \r\n)
+        rawData = rawData.replace(/\r?\n/g, '\r\n');
+    }
+    
+    return rawData;
 });
 
 // Determine if it's a request or response
@@ -283,7 +294,7 @@ const updateLine = (line: {
         .replace(/\s+/g, "");
     const newBytes: number[] = [];
     for (let i = 0; i < allHex.length; i += 2) {
-        const byte = parseInt(allHex.substr(i, 2), 16);
+        const byte = parseInt(allHex.substring(i, i + 2), 16);
         if (!isNaN(byte)) newBytes.push(byte);
     }
     rawData.value = new Uint8Array(newBytes);
