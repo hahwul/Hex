@@ -1,4 +1,9 @@
 <script setup lang="ts">
+/**
+ * HexViewMode Component
+ * Displays HTTP requests/responses in hexadecimal format with editing capabilities
+ * Ensures proper CRLF line endings for HTTP protocol compliance
+ */
 import { computed, reactive, ref, watch } from "vue";
 
 const columnWidths = reactive({ offset: 80, hex: 288, ascii: 160 });
