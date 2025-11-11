@@ -20,17 +20,9 @@ export default defineConfig({
   },
   plugins: [
     {
-      kind: "backend",
-      id: "backend",
-      root: "packages/backend",
-    },
-    {
       kind: "frontend",
       id: "frontend",
       root: "packages/frontend",
-      backend: {
-        id: "backend",
-      },
       vite: {
         plugins: [vue()],
         build: {

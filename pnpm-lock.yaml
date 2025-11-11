@@ -33,12 +33,6 @@ importers:
         specifier: 5.5.4
         version: 5.5.4
 
-  packages/backend:
-    devDependencies:
-      '@caido/sdk-backend':
-        specifier: ^0.46.0
-        version: 0.46.0
-
   packages/frontend:
     dependencies:
       '@caido/primevue':
@@ -54,18 +48,12 @@ importers:
         specifier: 3.4.37
         version: 3.4.37(typescript@5.5.4)
     devDependencies:
-      '@caido/sdk-backend':
-        specifier: ^0.46.0
-        version: 0.46.0
       '@caido/sdk-frontend':
         specifier: ^0.46.0
         version: 0.46.0(@codemirror/view@6.28.1)
       '@codemirror/view':
         specifier: 6.28.1
         version: 6.28.1
-      backend:
-        specifier: workspace:*
-        version: link:../backend
       vue-tsc:
         specifier: 2.0.29
         version: 2.0.29(typescript@5.5.4)
@@ -110,19 +98,10 @@ packages:
   '@caido/primevue@0.1.2':
     resolution: {integrity: sha512-PCv6qyvlWEKB97PLRzPHDjs7ZGW5JQrD6jvJiMEiprfu4IR5/dXiqRJ4M5g293qn+RAffBuiXcna0vWSxrg5lQ==}
 
-  '@caido/quickjs-types@0.17.2':
-    resolution: {integrity: sha512-5kcucGORMNEbcdU91yKLYZG/TFDqsO6XmCZ1TnU6V48E61mmqrJg6kjrfOFP1WOugDm+ZcGd/Su3p3XkFXfaPg==}
-
-  '@caido/sdk-backend@0.46.0':
-    resolution: {integrity: sha512-peUKW/4Nrw9WVxIahc+6KrVtxA7vsbpuJqOoBxudxq7tQJ+cV9IEqzvYoFFo8KlnrTkeUQUJvd0W4WsM3HgxEg==}
-
   '@caido/sdk-frontend@0.46.0':
     resolution: {integrity: sha512-yCSxRKiSXMVjbyvdrB2eTKCLS8ArcbSsYUgyIhGum3AmvuHwLX255mV5JV+M0FUpC1jdKaP9zhSSZandgPRqrg==}
     peerDependencies:
       '@codemirror/view': ^6.0.0
-
-  '@caido/sdk-shared@0.1.1':
-    resolution: {integrity: sha512-JAV5ajUqxZdXYPTmDEvIKBZon8I5uHq44ATj0Nj3BVpllRDUGY9kcBd+PXMD50+3lv1CvhR3/f6q24T0+4aVJQ==}
 
   '@caido/tailwindcss@0.0.1':
     resolution: {integrity: sha512-BGp7s8BiZv6eBV8x/j0t5nPBVKP7Bm+gJVY4APcFgFkNkrRSRDo0VuXN52OhiHc/+vTg85lrmLO8IWMM5bcJrQ==}
@@ -2479,18 +2458,9 @@ snapshots:
 
   '@caido/primevue@0.1.2': {}
 
-  '@caido/quickjs-types@0.17.2': {}
-
-  '@caido/sdk-backend@0.46.0':
-    dependencies:
-      '@caido/quickjs-types': 0.17.2
-      '@caido/sdk-shared': 0.1.1
-
   '@caido/sdk-frontend@0.46.0(@codemirror/view@6.28.1)':
     dependencies:
       '@codemirror/view': 6.28.1
-
-  '@caido/sdk-shared@0.1.1': {}
 
   '@caido/tailwindcss@0.0.1':
     dependencies:
