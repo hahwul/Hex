@@ -1,6 +1,6 @@
 @import "./caido.css";
 @import "./primevue.css";
-@import "js-hex-editor/dist/hex-editor.css";
+
 @import "tailwindcss/base";
 @import "tailwindcss/components";
 @import "tailwindcss/utilities";

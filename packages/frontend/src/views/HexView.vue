@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { HexEditor } from "js-hex-editor";
+import { HexEditor } from "../HexEditor";
 import { onMounted, ref, watch } from "vue";
 
 const props = defineProps<{
@@ -21,8 +21,9 @@ onMounted(() => {
         );
 
         if (props.isEditable) {
-            hexEditor.addEventListener("change", (event: CustomEvent) => {
-                emit("update:modelValue", event.detail);
+            hexEditor.addEventListener("change", (event: Event) => {
+                const customEvent = event as CustomEvent<Uint8Array>;
+                emit("update:modelValue", customEvent.detail);
             });
         }
     }

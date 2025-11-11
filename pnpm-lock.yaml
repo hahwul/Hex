@@ -35,9 +35,6 @@ importers:
 
   packages/frontend:
     dependencies:
-      js-hex-editor:
-        specifier: ^0.1.0
-        version: 0.1.0
       vue:
         specifier: 3.4.37
         version: 3.4.37(typescript@5.5.4)
@@ -1466,9 +1463,6 @@ packages:
   joycon@3.1.1:
     resolution: {integrity: sha512-34wB/Y7MW7bzjKRjUKTa46I2Z7eV62Rkhva+KkopW7Qvv/OSWBqvkSY7vusOPrNuZcUG3tApvdVgNB8POj3SPw==}
     engines: {node: '>=10'}
-
-  js-hex-editor@0.1.0:
-    resolution: {integrity: sha512-BsvPiWcMCeBb7JQ9WcwG8uSA1IPumlc1jZ5wEkL5B54+3eB41wIH8qEXF8uA343rvuXH8+pwosjBuPkBmh5RWQ==}
 
   js-yaml@4.1.0:
     resolution: {integrity: sha512-wpxZs9NoxZaJESJGIZTyDEaYpl0FKSA+FB9aJiyemKhMwkxQg63h4T1KJgUGHpTqPDNRcmmYLugrRjJlBtWvRA==}
@@ -3914,8 +3908,6 @@ snapshots:
   jiti@2.4.2: {}
 
   joycon@3.1.1: {}
-
-  js-hex-editor@0.1.0: {}
 
   js-yaml@4.1.0:
     dependencies:

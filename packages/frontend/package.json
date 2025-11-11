@@ -6,7 +6,6 @@
     "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
-    "js-hex-editor": "^0.1.0",
     "vue": "3.4.37"
   },
   "devDependencies": {
