@@ -12,7 +12,7 @@ export default defineConfig({
   id,
   name: "Hex",
   description: "Hex Viewer and Editor",
-  version: "0.1.1",
+  version: "0.1.2",
   author: {
     name: "hahwul",
     email: "hahwul@gmail.com",
