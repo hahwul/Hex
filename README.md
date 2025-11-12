@@ -29,6 +29,28 @@ pnpm install
 pnpm build
 ```
 
+### Running Tests
+
+The project includes comprehensive unit tests for the core functionality:
+
+```bash
+# Run all tests
+pnpm test
+
+# Run tests with coverage report
+pnpm test:coverage
+```
+
+### Linting and Type Checking
+
+```bash
+# Run linter
+pnpm lint
+
+# Run type checker
+pnpm typecheck
+```
+
 ## Important Note
 
 This plugin was created as a temporary convenience tool until official support for **Hex View** and **Edit** features is implemented in Caido. Once the related issue is resolved (see [caido/caido#29](https://github.com/caido/caido/issues/29)), this plugin will likely become unnecessary.

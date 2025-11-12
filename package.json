@@ -6,7 +6,9 @@
     "typecheck": "pnpm -r typecheck",
     "lint": "eslint ./packages/**/src --fix",
     "build": "caido-dev build",
-    "watch": "caido-dev watch"
+    "watch": "caido-dev watch",
+    "test": "pnpm -r test",
+    "test:coverage": "pnpm -r test:coverage"
   },
   "devDependencies": {
     "@caido-community/dev": "^0.1.3",
