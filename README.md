@@ -14,9 +14,22 @@ A Hex Viewer & Editor plugin for [Caido](https://caido.io/) that adds hex viewin
 
 ## Installation
 
-1. Grab the latest plugin_package.zip from our Releases page.
-2. In Caido, go to the Plugins page.
-3. Click Install Package and select the file you just downloaded.
+### From the Community Store (Recommended)
+
+Getting Hex up and running is a breeze.
+
+1. Head over to the **Plugins** page in Caido.
+2. Open the **Community Store**.
+3. Type **"Hex"** into the search bar.
+4. Click **Install**, and you're all set! ✨
+
+### The old-school way (Manual)
+
+If you prefer to do things by hand, we've got you covered.
+
+1. Grab the latest `plugin_package.zip` from our [Releases page](https://github.com/hahwul/Hex/releases).
+2. In Caido, go to the **Plugins** page.
+3. Click **Install Package** and select the file you just downloaded.
 
 ## Development
 
