@@ -178,6 +178,38 @@ describe("HexEditor", () => {
       expect(updatedData).toBeDefined();
       expect(updatedData![0]).toBe(0x00);
     });
+
+    it("should ignore invalid hexadecimal input", () => {
+      const data = new Uint8Array([0x48]);
+      const editor = new HexEditor(container, data, true);
+
+      const changeHandler = vi.fn();
+      editor.addEventListener("change", changeHandler);
+
+      const inputs = container.querySelectorAll("input");
+      const input = inputs[0] as HTMLInputElement;
+
+      input.value = "G";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+
+      expect(changeHandler).not.toHaveBeenCalled();
+    });
+
+    it("should ignore input longer than 2 characters", () => {
+      const data = new Uint8Array([0x48]);
+      const editor = new HexEditor(container, data, true);
+
+      const changeHandler = vi.fn();
+      editor.addEventListener("change", changeHandler);
+
+      const inputs = container.querySelectorAll("input");
+      const input = inputs[0] as HTMLInputElement;
+
+      input.value = "123";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+
+      expect(changeHandler).not.toHaveBeenCalled();
+    });
   });
 
   describe("rendering layout", () => {
