@@ -1,7 +1,7 @@
 import type { Caido } from "@caido/sdk-frontend";
 
 // Define our frontend SDK type
-export type FrontendSDK = Caido<API, Record<string, never>> & {
+export type FrontendSDK = Caido & {
   notifications?: {
     success: (message: string) => void;
     error: (message: string) => void;

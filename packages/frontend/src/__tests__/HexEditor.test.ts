@@ -19,21 +19,21 @@ describe("HexEditor", () => {
 
     it("should render hex data in the container", () => {
       const data = new Uint8Array([0x48, 0x65]);
-      const editor = new HexEditor(container, data, false);
+      new HexEditor(container, data, false);
       expect(container.textContent).toContain("48");
       expect(container.textContent).toContain("65");
     });
 
     it("should render in read-only mode when editable is false", () => {
       const data = new Uint8Array([0x48, 0x65]);
-      const editor = new HexEditor(container, data, false);
+      new HexEditor(container, data, false);
       const inputs = container.querySelectorAll("input");
       expect(inputs.length).toBe(0);
     });
 
     it("should render in editable mode when editable is true", () => {
       const data = new Uint8Array([0x48, 0x65]);
-      const editor = new HexEditor(container, data, true);
+      new HexEditor(container, data, true);
       const inputs = container.querySelectorAll("input");
       expect(inputs.length).toBe(2);
     });
@@ -53,7 +53,7 @@ describe("HexEditor", () => {
 
     it("should preserve a copy of the data", () => {
       const data = new Uint8Array([0x48, 0x65]);
-      const editor = new HexEditor(container, data, false);
+      new HexEditor(container, data, false);
 
       // Modify the original array
       data[0] = 0xff;
@@ -92,7 +92,7 @@ describe("HexEditor", () => {
   describe("editable mode", () => {
     it("should display bytes in uppercase hex format", () => {
       const data = new Uint8Array([0xab, 0xcd]);
-      const editor = new HexEditor(container, data, true);
+      new HexEditor(container, data, true);
       const inputs = container.querySelectorAll("input");
 
       expect((inputs[0] as HTMLInputElement).value).toBe("AB");
@@ -101,7 +101,7 @@ describe("HexEditor", () => {
 
     it("should pad single digit hex values with zero", () => {
       const data = new Uint8Array([0x05, 0x0f]);
-      const editor = new HexEditor(container, data, true);
+      new HexEditor(container, data, true);
       const inputs = container.querySelectorAll("input");
 
       expect((inputs[0] as HTMLInputElement).value).toBe("05");
@@ -148,7 +148,7 @@ describe("HexEditor", () => {
 
     it("should accept valid hexadecimal input", () => {
       const data = new Uint8Array([0x00]);
-      const editor = new HexEditor(container, data, true);
+      new HexEditor(container, data, true);
 
       const inputs = container.querySelectorAll("input");
       const input = inputs[0] as HTMLInputElement;
@@ -220,7 +220,7 @@ describe("HexEditor", () => {
         data[i] = i;
       }
 
-      const editor = new HexEditor(container, data, false);
+      new HexEditor(container, data, false);
       // Select the container div, then count its child divs (rows)
       const innerContainer = container.querySelector("div");
       const rows = innerContainer?.querySelectorAll(":scope > div");
@@ -235,7 +235,7 @@ describe("HexEditor", () => {
         data[i] = i;
       }
 
-      const editor = new HexEditor(container, data, false);
+      new HexEditor(container, data, false);
       // Select the container div, then count its child divs (rows)
       const innerContainer = container.querySelector("div");
       const rows = innerContainer?.querySelectorAll(":scope > div");
@@ -245,7 +245,7 @@ describe("HexEditor", () => {
 
     it("should use monospace font family", () => {
       const data = new Uint8Array([0x48]);
-      const editor = new HexEditor(container, data, false);
+      new HexEditor(container, data, false);
 
       const innerContainer = container.querySelector("div");
       expect(innerContainer?.style.fontFamily).toBe("monospace");
@@ -255,21 +255,21 @@ describe("HexEditor", () => {
   describe("edge cases", () => {
     it("should handle empty data array", () => {
       const data = new Uint8Array([]);
-      const editor = new HexEditor(container, data, false);
+      new HexEditor(container, data, false);
 
       expect(container.innerHTML).toBeTruthy();
     });
 
     it("should handle single byte", () => {
       const data = new Uint8Array([0x42]);
-      const editor = new HexEditor(container, data, false);
+      new HexEditor(container, data, false);
 
       expect(container.textContent).toContain("42");
     });
 
     it("should handle maximum byte value", () => {
       const data = new Uint8Array([0xff]);
-      const editor = new HexEditor(container, data, true);
+      new HexEditor(container, data, true);
       const inputs = container.querySelectorAll("input");
 
       expect(inputs.length).toBeGreaterThan(0);
@@ -278,7 +278,7 @@ describe("HexEditor", () => {
 
     it("should handle minimum byte value", () => {
       const data = new Uint8Array([0x00]);
-      const editor = new HexEditor(container, data, true);
+      new HexEditor(container, data, true);
       const inputs = container.querySelectorAll("input");
 
       expect(inputs.length).toBeGreaterThan(0);
