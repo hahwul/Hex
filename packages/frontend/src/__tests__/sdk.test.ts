@@ -11,7 +11,7 @@ describe("SDKPlugin", () => {
     } as unknown as App;
     const sdk = {} as FrontendSDK;
 
-    SDKPlugin(app, sdk);
+    (SDKPlugin as any)(app, sdk);
 
     expect(app.provide).toHaveBeenCalledTimes(1);
     expect(app.provide).toHaveBeenCalledWith(expect.any(Symbol), sdk);
