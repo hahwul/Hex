@@ -111,7 +111,7 @@ describe("HexViewMode.vue", () => {
 
       // "A" -> 41, "B" -> 42, "C" -> 43
       const hexCell = wrapper.find("td:nth-child(2) input");
-      expect(hexCell.element.value).toContain("41 42 43");
+      expect((hexCell.element as HTMLInputElement).value).toContain("41 42 43");
 
       const asciiCell = wrapper.find("td:nth-child(3)");
       expect(asciiCell.text()).toBe("ABC");
@@ -150,7 +150,7 @@ describe("HexViewMode.vue", () => {
       // Line1: 4c 69 6e 65 31
       // Line2: 4c 69 6e 65 32
       // CRLF: 0d 0a
-      expect(hexCell.element.value).toContain("0d 0a");
+      expect((hexCell.element as HTMLInputElement).value).toContain("0d 0a");
     });
 
     it("does not normalize LF to CRLF for responses", async () => {
@@ -174,8 +174,8 @@ describe("HexViewMode.vue", () => {
         // But here it's continuous.
         // "0a" should be present. "0d 0a" should NOT be present (unless it coincidentally formed from data).
         // 4c 69 6e 65 31 0a 4c 69 6e 65 32
-        expect(hexCell.element.value).not.toContain("0d 0a");
-        expect(hexCell.element.value).toContain("0a");
+        expect((hexCell.element as HTMLInputElement).value).not.toContain("0d 0a");
+        expect((hexCell.element as HTMLInputElement).value).toContain("0a");
     });
   });
 
@@ -217,7 +217,7 @@ describe("HexViewMode.vue", () => {
 
       // Check ASCII preview
       const asciiTextarea = wrapper.find("textarea[placeholder='ASCII representation']");
-      expect(asciiTextarea.element.value).toBe("B");
+      expect((asciiTextarea.element as HTMLTextAreaElement).value).toBe("B");
     });
 
     it("updates Hex preview when ASCII is edited in modal", async () => {
@@ -240,7 +240,7 @@ describe("HexViewMode.vue", () => {
 
       // Check Hex preview
       const hexTextarea = wrapper.find("textarea[placeholder*='Enter hex values']");
-      expect(hexTextarea.element.value).toBe("43");
+      expect((hexTextarea.element as HTMLTextAreaElement).value).toBe("43");
     });
 
     it("applies changes when OK is clicked", async () => {
@@ -271,7 +271,7 @@ describe("HexViewMode.vue", () => {
       const hexCell = wrapper.find("td:nth-child(2) input");
       const asciiCell = wrapper.find("td:nth-child(3)");
 
-      expect(hexCell.element.value).toContain("42");
+      expect((hexCell.element as HTMLInputElement).value).toContain("42");
       expect(asciiCell.text()).toBe("B");
     });
 
@@ -303,7 +303,7 @@ describe("HexViewMode.vue", () => {
       const hexCell = wrapper.find("td:nth-child(2) input");
       const asciiCell = wrapper.find("td:nth-child(3)");
 
-      expect(hexCell.element.value).toContain("41");
+      expect((hexCell.element as HTMLInputElement).value).toContain("41");
       expect(asciiCell.text()).toBe("A");
     });
   });
@@ -363,7 +363,7 @@ describe("HexViewMode.vue", () => {
 
         // 3. Verify dispatch called
         expect(mockDispatch).toHaveBeenCalled();
-        const callArgs = mockDispatch.mock.calls[0][0];
+        const callArgs = mockDispatch.mock.calls[0]?.[0];
         expect(callArgs.changes.insert).toBe("Best"); // "Test" -> "Best"
 
         // 4. Verify toast

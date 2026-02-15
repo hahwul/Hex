@@ -23,8 +23,9 @@ describe("init", () => {
 
     mocks.forEach((mock) => {
       expect(mock).toHaveBeenCalledTimes(1);
-      const options = mock.mock.calls[0][0];
+      const options = mock.mock.calls[0]?.[0];
 
+      expect(options).toBeDefined();
       expect(options.label).toBe("Hex");
       expect(options.view.component).toBe(HexViewMode);
 
