@@ -8,6 +8,12 @@ A Hex Viewer & Editor plugin for [Caido](https://caido.io/).
 
 - **Hex Viewer** — View hex representation of request/response bodies in History and Replay tabs
 - **Hex Editor** — Double-click any line to edit hex values directly
+- **Search** — Search Hex and ASCII data
+- **Go to offset** — Jump to a specific offset
+- **HTTP structure highlighting** — Highlights boundary between headers and body
+- **Copy as...** — Copy data as raw hex, spaced hex, C array, Python bytes, JSON array, or Hexdump
+- **Export binary data** — Download binary data
+- **Data Interpretation Panel** — Inspect values as numbers, text, base64, url-encoded, etc.
 
 ![](images/edit.jpg)
 
