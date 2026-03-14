@@ -5,7 +5,8 @@
  * Ensures proper CRLF line endings for HTTP protocol compliance
  */
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue";
-import { hexToAscii, asciiToHex, parseHttpRaw, ensureCRLF, detectFileSignature } from "../utils";
+import { hexToAscii, asciiToHex, parseHttpRaw, ensureCRLF, detectFileSignature, formatBytes } from "../utils";
+import type { CopyFormat } from "../utils";
 
 const MAX_SIZE_OPTIONS = [
   { label: "10 KB", value: 10240 },
@@ -101,9 +102,10 @@ const onScroll = (e: Event) => {
   scrollTop.value = (e.target as HTMLElement).scrollTop;
 };
 
-// Register keyboard shortcuts
+// Register keyboard shortcuts and global handlers
 onMounted(() => {
   document.addEventListener("keydown", onKeydown);
+  document.addEventListener("click", onDocumentClick, true);
 });
 
 // Clean up document-level event listeners on unmount
@@ -111,6 +113,7 @@ onUnmounted(() => {
   document.removeEventListener("mousemove", onMouseMove);
   document.removeEventListener("mouseup", onMouseUp);
   document.removeEventListener("keydown", onKeydown);
+  document.removeEventListener("click", onDocumentClick, true);
 });
 
 const props = defineProps<{
@@ -460,51 +463,29 @@ const getCopyBytes = (): Uint8Array => {
   return hasSelection.value ? selectedBytes.value : rawData.value;
 };
 
-type CopyFormat = "raw-hex" | "spaced-hex" | "c-array" | "python-bytes" | "json-array" | "hexdump";
-
 const copyAs = async (format: CopyFormat) => {
   const bytes = getCopyBytes();
   if (bytes.length === 0) return;
 
-  let text = "";
-  switch (format) {
-    case "raw-hex":
-      text = Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
-      break;
-    case "spaced-hex":
-      text = Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join(" ");
-      break;
-    case "c-array":
-      text = Array.from(bytes).map((b) => "\\x" + b.toString(16).padStart(2, "0")).join("");
-      break;
-    case "python-bytes":
-      text = "b'" + Array.from(bytes).map((b) => "\\x" + b.toString(16).padStart(2, "0")).join("") + "'";
-      break;
-    case "json-array":
-      text = "[" + Array.from(bytes).join(", ") + "]";
-      break;
-    case "hexdump": {
-      const lines: string[] = [];
-      for (let i = 0; i < bytes.length; i += bytesPerRow.value) {
-        const chunk = bytes.slice(i, i + bytesPerRow.value);
-        const offset = i.toString(16).padStart(8, "0");
-        const hex = Array.from(chunk).map((b) => b.toString(16).padStart(2, "0")).join(" ");
-        const ascii = Array.from(chunk).map((b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : ".")).join("");
-        lines.push(`${offset}  ${hex.padEnd(bytesPerRow.value * 3 - 1)}  ${ascii}`);
-      }
-      text = lines.join("\n");
-      break;
-    }
-  }
+  const text = formatBytes(bytes, format, bytesPerRow.value);
 
   try {
     await navigator.clipboard.writeText(text);
     props.sdk.window?.showToast?.("Copied to clipboard", { variant: "success" });
   } catch {
-    // Fallback for environments without clipboard API
     props.sdk.window?.showToast?.("Failed to copy", { variant: "error" });
   }
   showCopyMenu.value = false;
+};
+
+// Close copy menu on outside click
+const onDocumentClick = (e: MouseEvent) => {
+  if (showCopyMenu.value) {
+    const target = e.target as HTMLElement;
+    if (!target.closest("[data-copy-menu]")) {
+      showCopyMenu.value = false;
+    }
+  }
 };
 
 // Export raw binary data as file download
@@ -893,7 +874,7 @@ const saveChanges = async () => {
           >
             <i class="fas fa-layer-group"></i>
           </button>
-          <div class="relative">
+          <div class="relative" data-copy-menu>
             <button
               class="px-3 py-1 text-xs rounded hover:bg-surface-700 text-surface-300"
               title="Copy as..."

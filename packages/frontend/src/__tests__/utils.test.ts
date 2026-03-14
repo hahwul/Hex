@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { asciiToHex, ensureCRLF, hexToAscii, parseHttpRaw, detectFileSignature } from "../utils";
+import { asciiToHex, ensureCRLF, hexToAscii, parseHttpRaw, detectFileSignature, formatBytes } from "../utils";
 
 describe("utils", () => {
   describe("hexToAscii", () => {
@@ -268,6 +268,57 @@ describe("utils", () => {
       // RIFF....WAVE (not WebP)
       const data = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x41, 0x56, 0x45]);
       expect(detectFileSignature(data)).not.toBe("WebP");
+    });
+  });
+
+  describe("formatBytes", () => {
+    // "Hello" = [72, 101, 108, 108, 111]
+    const hello = new Uint8Array([0x48, 0x65, 0x6c, 0x6c, 0x6f]);
+
+    it("should format as raw hex", () => {
+      expect(formatBytes(hello, "raw-hex")).toBe("48656c6c6f");
+    });
+
+    it("should format as spaced hex", () => {
+      expect(formatBytes(hello, "spaced-hex")).toBe("48 65 6c 6c 6f");
+    });
+
+    it("should format as C array", () => {
+      expect(formatBytes(hello, "c-array")).toBe("\\x48\\x65\\x6c\\x6c\\x6f");
+    });
+
+    it("should format as Python bytes", () => {
+      expect(formatBytes(hello, "python-bytes")).toBe("b'\\x48\\x65\\x6c\\x6c\\x6f'");
+    });
+
+    it("should format as JSON array", () => {
+      expect(formatBytes(hello, "json-array")).toBe("[72, 101, 108, 108, 111]");
+    });
+
+    it("should format as hexdump", () => {
+      const result = formatBytes(hello, "hexdump", 16);
+      expect(result).toContain("00000000");
+      expect(result).toContain("48 65 6c 6c 6f");
+      expect(result).toContain("Hello");
+    });
+
+    it("should format hexdump with custom bytes per row", () => {
+      const data = new Uint8Array([0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48]);
+      const result = formatBytes(data, "hexdump", 4);
+      const lines = result.split("\n");
+      expect(lines.length).toBe(2);
+      expect(lines[0]).toContain("41 42 43 44");
+      expect(lines[1]).toContain("45 46 47 48");
+    });
+
+    it("should return empty string for empty bytes", () => {
+      expect(formatBytes(new Uint8Array(), "raw-hex")).toBe("");
+    });
+
+    it("should handle non-printable characters in hexdump ASCII", () => {
+      const data = new Uint8Array([0x00, 0x41, 0x7f]);
+      const result = formatBytes(data, "hexdump");
+      expect(result).toContain(".A.");
     });
   });
 });

@@ -158,6 +158,39 @@ export const detectFileSignature = (data: Uint8Array): string | null => {
 };
 
 /**
+ * Format bytes in various programming-friendly formats
+ */
+export type CopyFormat = "raw-hex" | "spaced-hex" | "c-array" | "python-bytes" | "json-array" | "hexdump";
+
+export const formatBytes = (bytes: Uint8Array, format: CopyFormat, bytesPerRow = 16): string => {
+  if (bytes.length === 0) return "";
+
+  switch (format) {
+    case "raw-hex":
+      return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
+    case "spaced-hex":
+      return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join(" ");
+    case "c-array":
+      return Array.from(bytes).map((b) => "\\x" + b.toString(16).padStart(2, "0")).join("");
+    case "python-bytes":
+      return "b'" + Array.from(bytes).map((b) => "\\x" + b.toString(16).padStart(2, "0")).join("") + "'";
+    case "json-array":
+      return "[" + Array.from(bytes).join(", ") + "]";
+    case "hexdump": {
+      const lines: string[] = [];
+      for (let i = 0; i < bytes.length; i += bytesPerRow) {
+        const chunk = bytes.slice(i, i + bytesPerRow);
+        const offset = i.toString(16).padStart(8, "0");
+        const hex = Array.from(chunk).map((b) => b.toString(16).padStart(2, "0")).join(" ");
+        const ascii = Array.from(chunk).map((b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : ".")).join("");
+        lines.push(`${offset}  ${hex.padEnd(bytesPerRow * 3 - 1)}  ${ascii}`);
+      }
+      return lines.join("\n");
+    }
+  }
+};
+
+/**
  * Ensure proper CRLF line endings for HTTP protocol compliance
  * @param rawData - Raw string data
  * @returns String with CRLF line endings

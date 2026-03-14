@@ -945,4 +945,92 @@ describe("HexViewMode.vue", () => {
       expect(wrapper.findAll("tr.bg-purple-500\\/15").length).toBe(0);
     });
   });
+
+  describe("Virtual Scrolling", () => {
+    it("renders rows with data-hex-row attributes", async () => {
+      const wrapper = mount(HexViewMode, {
+        props: {
+          ...defaultProps,
+          request: { raw: "A".repeat(64), host: "test", path: "/" },
+        },
+      });
+
+      // Should have rows with data-hex-row attributes
+      const rows = wrapper.findAll("tr[data-hex-row]");
+      expect(rows.length).toBeGreaterThan(0);
+
+      // First row should have index 0
+      expect(rows[0]?.attributes("data-hex-row")).toBe("0");
+    });
+
+    it("renders correct number of rows for small data", async () => {
+      // 48 bytes = 3 rows at 16 bytes/row
+      const wrapper = mount(HexViewMode, {
+        props: {
+          ...defaultProps,
+          request: { raw: "A".repeat(48), host: "test", path: "/" },
+        },
+      });
+
+      const rows = wrapper.findAll("tr[data-hex-row]");
+      expect(rows.length).toBe(3);
+    });
+
+    it("uses virtual scroll container structure", async () => {
+      const wrapper = mount(HexViewMode, {
+        props: {
+          ...defaultProps,
+          request: { raw: "A".repeat(64), host: "test", path: "/" },
+        },
+      });
+
+      // Should have the scroll container with overflow-auto
+      const scrollContainer = wrapper.find("[class*='h-full overflow-auto']");
+      expect(scrollContainer.exists()).toBe(true);
+
+      // Should have a positioning wrapper div inside
+      const innerDiv = scrollContainer.find("div[style]");
+      expect(innerDiv.exists()).toBe(true);
+    });
+  });
+
+  describe("Copy Menu", () => {
+    it("toggles copy menu visibility", async () => {
+      const wrapper = mount(HexViewMode, {
+        props: {
+          ...defaultProps,
+          request: { raw: "Hello", host: "test", path: "/" },
+        },
+      });
+
+      // Menu should not be visible initially
+      expect(wrapper.find("[data-copy-menu] .absolute").exists()).toBe(false);
+
+      // Click copy button
+      const copyBtn = wrapper.find("button[title='Copy as...']");
+      await copyBtn.trigger("click");
+
+      // Menu should be visible
+      expect(wrapper.find("[data-copy-menu] .absolute").exists()).toBe(true);
+    });
+
+    it("shows all copy format options", async () => {
+      const wrapper = mount(HexViewMode, {
+        props: {
+          ...defaultProps,
+          request: { raw: "Hello", host: "test", path: "/" },
+        },
+      });
+
+      await wrapper.find("button[title='Copy as...']").trigger("click");
+
+      const menu = wrapper.find("[data-copy-menu] .absolute");
+      expect(menu.text()).toContain("Raw hex");
+      expect(menu.text()).toContain("Spaced hex");
+      expect(menu.text()).toContain("C array");
+      expect(menu.text()).toContain("Python bytes");
+      expect(menu.text()).toContain("JSON array");
+      expect(menu.text()).toContain("Hexdump");
+    });
+  });
 });
