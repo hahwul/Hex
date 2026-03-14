@@ -180,14 +180,44 @@ describe("HexViewMode.vue", () => {
   });
 
   describe("Modal Interaction", () => {
-    it("opens modal on double click", async () => {
+    // Helper to create mock SDK with editor returning given raw content
+    const createEditorSdk = (raw: string) => ({
+      window: {
+        getActiveEditor: vi.fn().mockReturnValue({
+          getEditorView: () => ({
+            state: { doc: { toString: () => raw, length: raw.length } },
+            dispatch: vi.fn(),
+          }),
+        }),
+        showToast: vi.fn(),
+      },
+    });
+
+    it("does not open modal on double click outside Replay tab", async () => {
+      window.location.hash = "#/http-history";
       const raw = "Test";
       const wrapper = mount(HexViewMode, {
         props: {
           ...defaultProps,
           request: { raw, host: "test", path: "/" },
         },
-        attachTo: document.body // Needed for some interactions? Maybe not for dblclick on element
+      });
+
+      const hexInput = wrapper.find("td:nth-child(2) input");
+      await hexInput.trigger("dblclick");
+
+      expect(wrapper.find(".fixed.inset-0").exists()).toBe(false);
+    });
+
+    it("opens modal on double click in Replay tab", async () => {
+      window.location.hash = "#/replay/123";
+      const raw = "Test";
+      const wrapper = mount(HexViewMode, {
+        props: {
+          sdk: createEditorSdk(raw),
+          request: { raw, host: "test", path: "/" },
+        },
+        attachTo: document.body
       });
 
       const hexInput = wrapper.find("td:nth-child(2) input");
@@ -198,10 +228,11 @@ describe("HexViewMode.vue", () => {
     });
 
     it("updates ASCII preview when Hex is edited in modal", async () => {
+      window.location.hash = "#/replay/123";
       const raw = "A";
       const wrapper = mount(HexViewMode, {
         props: {
-          ...defaultProps,
+          sdk: createEditorSdk(raw),
           request: { raw, host: "test", path: "/" },
         },
       });
@@ -221,10 +252,11 @@ describe("HexViewMode.vue", () => {
     });
 
     it("updates Hex preview when ASCII is edited in modal", async () => {
+      window.location.hash = "#/replay/123";
       const raw = "A";
       const wrapper = mount(HexViewMode, {
         props: {
-          ...defaultProps,
+          sdk: createEditorSdk(raw),
           request: { raw, host: "test", path: "/" },
         },
       });
@@ -244,10 +276,11 @@ describe("HexViewMode.vue", () => {
     });
 
     it("applies changes when OK is clicked", async () => {
+      window.location.hash = "#/replay/123";
       const raw = "A";
       const wrapper = mount(HexViewMode, {
         props: {
-          ...defaultProps,
+          sdk: createEditorSdk(raw),
           request: { raw, host: "test", path: "/" },
         },
       });
@@ -276,10 +309,11 @@ describe("HexViewMode.vue", () => {
     });
 
     it("discards changes when Cancel is clicked", async () => {
+      window.location.hash = "#/replay/123";
       const raw = "A";
       const wrapper = mount(HexViewMode, {
         props: {
-          ...defaultProps,
+          sdk: createEditorSdk(raw),
           request: { raw, host: "test", path: "/" },
         },
       });

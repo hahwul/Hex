@@ -4,7 +4,11 @@
  * Displays HTTP requests/responses in hexadecimal format with editing capabilities
  * Ensures proper CRLF line endings for HTTP protocol compliance
  */
-import { computed, reactive, ref, watch } from "vue";
+import { computed, onUnmounted, reactive, ref, watch } from "vue";
+import { hexToAscii, asciiToHex, parseHttpRaw, ensureCRLF } from "../utils";
+
+const MAX_SIZE_BYTES = 10240; // 10KB size limit
+const BYTES_PER_ROW = 16;
 
 const columnWidths = reactive({ offset: 80, hex: 288, ascii: 160 });
 
@@ -37,6 +41,12 @@ const onMouseUp = () => {
   document.removeEventListener("mousemove", onMouseMove);
   document.removeEventListener("mouseup", onMouseUp);
 };
+
+// Clean up document-level event listeners on unmount
+onUnmounted(() => {
+  document.removeEventListener("mousemove", onMouseMove);
+  document.removeEventListener("mouseup", onMouseUp);
+});
 
 const props = defineProps<{
   sdk: any;
@@ -77,10 +87,8 @@ const raw = computed(() => {
   }
 
   // Ensure proper HTTP line endings (CRLF) for requests
-  // HTTP protocol requires \r\n line endings, but editors may normalize to \n
   if (rawData && isRequest.value) {
-    // Only convert standalone \n to \r\n (don't double-convert \r\n)
-    rawData = rawData.replace(/\r?\n/g, "\r\n");
+    rawData = ensureCRLF(rawData);
   }
 
   return rawData;
@@ -92,13 +100,17 @@ const isRequest = computed(() => !!props.request);
 // Determine if it's in Replay tab (where editing is allowed)
 const isReplayTab = computed(() => window.location.hash.includes("/replay"));
 
-// Open modal for editing
+// Editing is only allowed for requests in the Replay tab
+const isEditable = computed(() => isReplayTab.value && isRequest.value);
+
+// Open modal for editing (only in editable context)
 const openEditModal = (line: {
   offset: string;
   hex: string;
   ascii: string;
   editing?: boolean;
 }) => {
+  if (!isEditable.value) return;
   modalState.currentLine = line;
   modalState.currentHex = line.hex;
   modalState.originalHex = line.hex;
@@ -107,44 +119,10 @@ const openEditModal = (line: {
   modalState.showModal = true;
 };
 
-// Convert hex string to ASCII string
-const hexToAscii = (hex: string): string => {
-  const hexParts = hex.split(" ").filter((h) => h.length === 2);
-  const bytes = hexParts.map((h) => parseInt(h, 16)).filter((b) => !isNaN(b));
-  return bytes
-    .map((b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : "."))
-    .join("");
-};
-
-// Convert ASCII string to hex string
-const asciiToHex = (ascii: string): string => {
-  const bytes: number[] = [];
-  for (let i = 0; i < ascii.length; i++) {
-    const char = ascii[i];
-    if (!char) continue; // Skip undefined characters
-    if (char === ".") {
-      // Keep original byte for "." placeholders if available
-      const originalBytes = modalState.originalHex
-        .split(" ")
-        .filter((h) => h.length === 2);
-      if (i < originalBytes.length) {
-        const originalByte = originalBytes[i];
-        if (originalByte) {
-          bytes.push(parseInt(originalByte, 16));
-        }
-      } else {
-        bytes.push(46); // ASCII code for "."
-      }
-    } else {
-      bytes.push(char.charCodeAt(0));
-    }
-  }
-  return bytes.map((b) => b.toString(16).padStart(2, "0")).join(" ");
-};
 
 // Update hex when ASCII changes
 const updateHexFromAscii = () => {
-  modalState.currentHex = asciiToHex(modalState.currentAscii);
+  modalState.currentHex = asciiToHex(modalState.currentAscii, modalState.originalHex);
 };
 
 // Update ASCII when hex changes
@@ -166,36 +144,6 @@ const cancelEdit = () => {
   modalState.showModal = false;
 };
 
-// Parse HTTP raw data
-const parseHttpRaw = (raw: string) => {
-  if (!raw) return null;
-
-  const parts = raw.split("\r\n\r\n");
-  if (parts.length < 2) return null;
-
-  const headerSection = parts[0];
-  const body = parts.slice(1).join("\r\n\r\n");
-
-  const lines = headerSection?.split("\r\n") || [];
-  const firstLine = lines[0];
-
-  const methodMatch = firstLine?.match(/^(\w+)\s+/);
-  const method = methodMatch ? methodMatch[1] : "UNKNOWN";
-
-  const headers: Record<string, string> = {};
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i];
-    if (!line) continue;
-    const colonIndex = line.indexOf(":");
-    if (colonIndex > 0) {
-      const name = line.substring(0, colonIndex).trim();
-      const value = line.substring(colonIndex + 1).trim();
-      headers[name] = value;
-    }
-  }
-
-  return { method, headers, body };
-};
 
 const parsedHttp = computed(() => {
   try {
@@ -220,10 +168,8 @@ watch(
         return;
       }
 
-      // Size limit: 10KB
-      const maxSize = 10240;
       const rawStr =
-        newRaw.length > maxSize ? newRaw.substring(0, maxSize) : newRaw;
+        newRaw.length > MAX_SIZE_BYTES ? newRaw.substring(0, MAX_SIZE_BYTES) : newRaw;
 
       // Assuming raw is UTF-8 encoded string, convert to Uint8Array
       const encoder = new TextEncoder();
@@ -262,8 +208,8 @@ watch(
     }
 
     const lines = [];
-    for (let i = 0; i < data.length; i += 16) {
-      const chunk = data.slice(i, i + 16);
+    for (let i = 0; i < data.length; i += BYTES_PER_ROW) {
+      const chunk = data.slice(i, i + BYTES_PER_ROW);
       const offset = i.toString(16).padStart(8, "0");
       const hex = Array.from(chunk)
         .map((b) => b.toString(16).padStart(2, "0"))
@@ -285,12 +231,8 @@ const updateLine = (line: {
   ascii: string;
   editing?: boolean;
 }) => {
-  // Update ASCII
-  const hexParts = line.hex.split(" ").filter((h) => h.length === 2);
-  const bytes = hexParts.map((h) => parseInt(h, 16)).filter((b) => !isNaN(b));
-  line.ascii = bytes
-    .map((b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : "."))
-    .join("");
+  // Update ASCII from hex using shared utility
+  line.ascii = hexToAscii(line.hex);
 
   // Reconstruct rawData
   const allHex = dumpLines.value
@@ -307,8 +249,8 @@ const updateLine = (line: {
 
 // Check if data is truncated
 const isTruncated = computed(() => {
-  const raw = props?.request?.raw;
-  return raw && raw.length > 10240;
+  const rawStr = props?.request?.raw || props?.response?.raw;
+  return rawStr && rawStr.length > MAX_SIZE_BYTES;
 });
 
 // Calculate diff between original and current hex values
@@ -448,7 +390,7 @@ const saveChanges = async () => {
                   <input
                     :value="line.hex"
                     readonly
-                    class="w-full bg-transparent text-surface-300 border-none outline-none cursor-pointer"
+                    :class="['w-full bg-transparent text-surface-300 border-none outline-none', isEditable ? 'cursor-pointer' : 'cursor-default']"
                     @dblclick="openEditModal(line)"
                   />
                   <div

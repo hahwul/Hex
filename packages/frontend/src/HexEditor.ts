@@ -1,3 +1,5 @@
+const BYTES_PER_ROW = 16;
+
 export class HexEditor extends EventTarget {
   private element: HTMLElement;
   private data: Uint8Array;
@@ -31,8 +33,8 @@ export class HexEditor extends EventTarget {
     container.style.whiteSpace = "pre-wrap";
     container.style.lineHeight = "1.5";
 
-    for (let i = 0; i < this.data.length; i += 16) {
-      const row = this.data.slice(i, i + 16);
+    for (let i = 0; i < this.data.length; i += BYTES_PER_ROW) {
+      const row = this.data.slice(i, i + BYTES_PER_ROW);
       const rowDiv = document.createElement("div");
 
       row.forEach((byte, idx) => {
@@ -48,15 +50,27 @@ export class HexEditor extends EventTarget {
           input.style.fontSize = "inherit";
           input.maxLength = 2;
           input.addEventListener("input", (e) => {
-            const val = (e.target as HTMLInputElement).value;
-            if (/^[0-9a-fA-F]{0,2}$/.test(val)) {
-              const num = parseInt(val || "0", 16);
+            const inputEl = e.target as HTMLInputElement;
+            const val = inputEl.value;
+            if (/^[0-9a-fA-F]{1,2}$/.test(val)) {
+              const num = parseInt(val, 16);
               this.data[i + idx] = num;
               this.dispatchEvent(
                 new CustomEvent("change", {
                   detail: new Uint8Array(this.data),
                 }),
               );
+            } else if (val === "") {
+              // Allow clearing, treat as 0x00
+              this.data[i + idx] = 0;
+              this.dispatchEvent(
+                new CustomEvent("change", {
+                  detail: new Uint8Array(this.data),
+                }),
+              );
+            } else {
+              // Revert invalid input to current byte value
+              inputEl.value = this.data[i + idx]!.toString(16).padStart(2, "0").toUpperCase();
             }
           });
           rowDiv.appendChild(input);
