@@ -90,10 +90,11 @@ const visibleRange = computed(() => {
 
 const visibleLines = computed(() => {
   const { start, end } = visibleRange.value;
-  return dumpLines.value.slice(start, end).map((line, i) => {
-    (line as any)._index = start + i;
-    return line as typeof line & { _index: number };
-  });
+  return dumpLines.value.slice(start, end).map((line, i) => ({
+    ...line,
+    _index: start + i,
+    _ref: line, // keep reference to original for modal editing
+  }));
 });
 
 const onScroll = (e: Event) => {
@@ -137,15 +138,19 @@ const modalState = reactive({
 const searchState = reactive({
   query: "",
   mode: "hex" as "hex" | "ascii",
-  matches: [] as { lineIndex: number; byteOffset: number; length: number }[],
+  matches: [] as { byteOffset: number; length: number }[],
   currentMatchIndex: -1,
   showSearch: false,
 });
+
+// Precomputed highlight set for O(1) lookup
+const highlightedOffsets = ref(new Set<number>());
 
 // Perform search on rawData
 const performSearch = () => {
   searchState.matches = [];
   searchState.currentMatchIndex = -1;
+  highlightedOffsets.value = new Set();
 
   const query = searchState.query.trim();
   if (!query || rawData.value.length === 0) return;
@@ -169,6 +174,7 @@ const performSearch = () => {
 
   // Find all occurrences in rawData
   const data = rawData.value;
+  const offsets = new Set<number>();
   for (let i = 0; i <= data.length - searchBytes.length; i++) {
     let found = true;
     for (let j = 0; j < searchBytes.length; j++) {
@@ -179,12 +185,15 @@ const performSearch = () => {
     }
     if (found) {
       searchState.matches.push({
-        lineIndex: Math.floor(i / bytesPerRow.value),
         byteOffset: i,
         length: searchBytes.length,
       });
+      for (let j = 0; j < searchBytes.length; j++) {
+        offsets.add(i + j);
+      }
     }
   }
+  highlightedOffsets.value = offsets;
 
   if (searchState.matches.length > 0) {
     searchState.currentMatchIndex = 0;
@@ -205,25 +214,27 @@ const goToMatch = (direction: "next" | "prev") => {
   scrollToCurrentMatch();
 };
 
+// Scroll virtual scroll container to center a given line index
+const scrollToLine = (lineIndex: number) => {
+  const container = scrollContainerRef.value;
+  if (!container) return;
+  const containerHeight = container.clientHeight;
+  const targetTop = lineIndex * ROW_HEIGHT - containerHeight / 2 + ROW_HEIGHT / 2;
+  container.scrollTo({ top: Math.max(0, targetTop), behavior: "smooth" });
+  scrollTop.value = Math.max(0, targetTop);
+};
+
 const scrollToCurrentMatch = () => {
   if (searchState.currentMatchIndex < 0) return;
   const match = searchState.matches[searchState.currentMatchIndex];
   if (!match) return;
-  nextTick(() => {
-    const row = document.querySelector(
-      `[data-hex-row="${match.lineIndex}"]`,
-    ) as HTMLElement | null;
-    row?.scrollIntoView({ block: "center", behavior: "smooth" });
-  });
+  const lineIndex = Math.floor(match.byteOffset / bytesPerRow.value);
+  nextTick(() => scrollToLine(lineIndex));
 };
 
-// Check if a byte at a given global offset is part of any match
+// Check if a byte at a given global offset is part of any match (O(1) lookup)
 const isHighlighted = (globalByteOffset: number): boolean => {
-  return searchState.matches.some(
-    (m) =>
-      globalByteOffset >= m.byteOffset &&
-      globalByteOffset < m.byteOffset + m.length,
-  );
+  return highlightedOffsets.value.has(globalByteOffset);
 };
 
 // Check if a byte is part of the current (focused) match
@@ -276,8 +287,8 @@ const goToOffset = () => {
   let offset: number;
   if (input.toLowerCase().startsWith("0x")) {
     offset = parseInt(input, 16);
-  } else if (/^[0-9a-fA-F]+$/.test(input) && input.length > 4) {
-    // Treat long hex-looking strings as hex
+  } else if (/[a-fA-F]/.test(input) && /^[0-9a-fA-F]+$/.test(input)) {
+    // Contains hex letters (A-F), treat as hex
     offset = parseInt(input, 16);
   } else {
     offset = parseInt(input, 10);
@@ -290,13 +301,7 @@ const goToOffset = () => {
 
   gotoState.highlightedOffset = offset;
   const lineIndex = Math.floor(offset / bytesPerRow.value);
-
-  nextTick(() => {
-    const row = document.querySelector(
-      `[data-hex-row="${lineIndex}"]`,
-    ) as HTMLElement | null;
-    row?.scrollIntoView({ block: "center", behavior: "smooth" });
-  });
+  nextTick(() => scrollToLine(lineIndex));
 };
 
 const toggleGoto = () => {
@@ -543,8 +548,10 @@ const exportBinary = () => {
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
 
 // Edit mode removed, using per-line editing
@@ -758,10 +765,12 @@ const updateLine = (line: {
   rawData.value = new Uint8Array(newBytes);
 };
 
-// Check if data is truncated
+// Check if data is truncated (compare encoded byte length)
 const isTruncated = computed(() => {
   const rawStr = props?.request?.raw || props?.response?.raw;
-  return rawStr && maxSizeBytes.value > 0 && rawStr.length > maxSizeBytes.value;
+  if (!rawStr || maxSizeBytes.value === 0) return false;
+  const encoder = new TextEncoder();
+  return encoder.encode(rawStr).length > maxSizeBytes.value;
 });
 
 // Calculate diff between original and current hex values
@@ -1090,7 +1099,7 @@ const saveChanges = async () => {
                 <td
                   class="px-2 py-1 border-r border-surface-600 relative"
                   :style="{ width: columnWidths.hex + 'px' }"
-                  @dblclick="openEditModal(line)"
+                  @dblclick="openEditModal(line._ref)"
                 >
                   <span class="font-mono whitespace-pre" :class="isEditable ? 'cursor-pointer' : 'cursor-default'">
                     <template v-for="(byte, bIdx) in line.hex.split(' ')" :key="bIdx">

@@ -25,7 +25,7 @@ All notable changes to **Hex** will be documented in this file.
   - UTF-8, Base64, URL-encoded views
   - Selection count in status bar
 - Magic bytes / file signature detection (#21)
-  - Auto-detect 25+ file formats (PNG, JPEG, GIF, WebP, PDF, ZIP, GZIP, ELF, PE, etc.)
+  - Auto-detect file formats (PNG, JPEG, GIF, WebP, PDF, ZIP, GZIP, ELF, PE, SQLite, etc.)
   - Display detected type as badge in toolbar
   - Detects signatures in HTTP body (after headers)
 - Byte range selection with synchronized highlighting (#22)
