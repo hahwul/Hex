@@ -84,6 +84,113 @@ export const parseHttpRaw = (raw: string) => {
 };
 
 /**
+ * Known file signatures (magic bytes)
+ */
+interface FileSignature {
+  name: string;
+  bytes: number[];
+  offset?: number; // offset in body, default 0
+}
+
+const FILE_SIGNATURES: FileSignature[] = [
+  // Images
+  { name: "PNG", bytes: [0x89, 0x50, 0x4e, 0x47] },
+  { name: "JPEG", bytes: [0xff, 0xd8, 0xff] },
+  { name: "GIF87a", bytes: [0x47, 0x49, 0x46, 0x38, 0x37, 0x61] },
+  { name: "GIF89a", bytes: [0x47, 0x49, 0x46, 0x38, 0x39, 0x61] },
+  { name: "WebP", bytes: [0x52, 0x49, 0x46, 0x46], offset: 0 }, // RIFF....WEBP
+  { name: "BMP", bytes: [0x42, 0x4d] },
+  { name: "ICO", bytes: [0x00, 0x00, 0x01, 0x00] },
+  { name: "TIFF (BE)", bytes: [0x4d, 0x4d, 0x00, 0x2a] },
+  { name: "TIFF (LE)", bytes: [0x49, 0x49, 0x2a, 0x00] },
+  // Documents / Archives
+  { name: "PDF", bytes: [0x25, 0x50, 0x44, 0x46] },
+  { name: "ZIP", bytes: [0x50, 0x4b, 0x03, 0x04] },
+  { name: "GZIP", bytes: [0x1f, 0x8b] },
+  { name: "RAR", bytes: [0x52, 0x61, 0x72, 0x21, 0x1a, 0x07] },
+  { name: "7z", bytes: [0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c] },
+  { name: "TAR", bytes: [0x75, 0x73, 0x74, 0x61, 0x72], offset: 257 },
+  // Executables
+  { name: "ELF", bytes: [0x7f, 0x45, 0x4c, 0x46] },
+  { name: "PE", bytes: [0x4d, 0x5a] },
+  { name: "Mach-O (32)", bytes: [0xfe, 0xed, 0xfa, 0xce] },
+  { name: "Mach-O (64)", bytes: [0xfe, 0xed, 0xfa, 0xcf] },
+  // Other
+  { name: "WASM", bytes: [0x00, 0x61, 0x73, 0x6d] },
+  { name: "SQLite", bytes: [0x53, 0x51, 0x4c, 0x69, 0x74, 0x65, 0x20, 0x66, 0x6f, 0x72, 0x6d, 0x61, 0x74, 0x20, 0x33, 0x00] },
+  { name: "FLAC", bytes: [0x66, 0x4c, 0x61, 0x43] },
+  { name: "OGG", bytes: [0x4f, 0x67, 0x67, 0x53] },
+  { name: "MP3 (ID3)", bytes: [0x49, 0x44, 0x33] },
+];
+
+/**
+ * Detect file signature (magic bytes) in a byte array
+ * @param data - Uint8Array to check
+ * @returns Detected file type name or null
+ */
+export const detectFileSignature = (data: Uint8Array): string | null => {
+  if (data.length === 0) return null;
+
+  for (const sig of FILE_SIGNATURES) {
+    const offset = sig.offset || 0;
+    if (data.length < offset + sig.bytes.length) continue;
+
+    let match = true;
+    for (let i = 0; i < sig.bytes.length; i++) {
+      if (data[offset + i] !== sig.bytes[i]) {
+        match = false;
+        break;
+      }
+    }
+
+    if (match) {
+      // Special check for WebP: bytes 8-11 must be "WEBP"
+      if (sig.name === "WebP") {
+        if (data.length < 12 || data[8] !== 0x57 || data[9] !== 0x45 || data[10] !== 0x42 || data[11] !== 0x50) {
+          continue;
+        }
+      }
+      return sig.name;
+    }
+  }
+
+  return null;
+};
+
+/**
+ * Format bytes in various programming-friendly formats
+ */
+export type CopyFormat = "raw-hex" | "spaced-hex" | "c-array" | "python-bytes" | "json-array" | "hexdump";
+
+export const formatBytes = (bytes: Uint8Array, format: CopyFormat, bytesPerRow = 16): string => {
+  if (bytes.length === 0) return "";
+
+  switch (format) {
+    case "raw-hex":
+      return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
+    case "spaced-hex":
+      return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join(" ");
+    case "c-array":
+      return Array.from(bytes).map((b) => "\\x" + b.toString(16).padStart(2, "0")).join("");
+    case "python-bytes":
+      return "b'" + Array.from(bytes).map((b) => "\\x" + b.toString(16).padStart(2, "0")).join("") + "'";
+    case "json-array":
+      return "[" + Array.from(bytes).join(", ") + "]";
+    case "hexdump": {
+      const lines: string[] = [];
+      for (let i = 0; i < bytes.length; i += bytesPerRow) {
+        const chunk = bytes.slice(i, i + bytesPerRow);
+        const offset = i.toString(16).padStart(8, "0");
+        const hex = Array.from(chunk).map((b) => b.toString(16).padStart(2, "0")).join(" ");
+        const ascii = Array.from(chunk).map((b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : ".")).join("");
+        lines.push(`${offset}  ${hex.padEnd(bytesPerRow * 3 - 1)}  ${ascii}`);
+      }
+      return lines.join("\n");
+    }
+  }
+};
+
+/**
  * Ensure proper CRLF line endings for HTTP protocol compliance
  * @param rawData - Raw string data
  * @returns String with CRLF line endings

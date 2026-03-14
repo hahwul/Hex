@@ -4,11 +4,23 @@
  * Displays HTTP requests/responses in hexadecimal format with editing capabilities
  * Ensures proper CRLF line endings for HTTP protocol compliance
  */
-import { computed, onUnmounted, reactive, ref, watch } from "vue";
-import { hexToAscii, asciiToHex, parseHttpRaw, ensureCRLF } from "../utils";
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue";
+import { hexToAscii, asciiToHex, parseHttpRaw, ensureCRLF, detectFileSignature, formatBytes } from "../utils";
+import type { CopyFormat } from "../utils";
 
-const MAX_SIZE_BYTES = 10240; // 10KB size limit
-const BYTES_PER_ROW = 16;
+const MAX_SIZE_OPTIONS = [
+  { label: "10 KB", value: 10240 },
+  { label: "50 KB", value: 51200 },
+  { label: "100 KB", value: 102400 },
+  { label: "Unlimited", value: 0 },
+] as const;
+const maxSizeBytes = ref(10240);
+
+const BYTES_PER_ROW_OPTIONS = [8, 16, 32] as const;
+const BYTE_GROUP_OPTIONS = [1, 2, 4, 8] as const;
+
+const bytesPerRow = ref(16);
+const byteGrouping = ref(1);
 
 const columnWidths = reactive({ offset: 80, hex: 288, ascii: 160 });
 
@@ -42,10 +54,66 @@ const onMouseUp = () => {
   document.removeEventListener("mouseup", onMouseUp);
 };
 
+// Keyboard shortcuts handler
+const onKeydown = (e: KeyboardEvent) => {
+  // Ctrl+F: Open search
+  if ((e.ctrlKey || e.metaKey) && e.key === "f") {
+    e.preventDefault();
+    if (!searchState.showSearch) toggleSearch();
+    return;
+  }
+  // Ctrl+G: Open go to offset
+  if ((e.ctrlKey || e.metaKey) && e.key === "g") {
+    e.preventDefault();
+    if (!gotoState.showGoto) toggleGoto();
+    return;
+  }
+};
+
+// Virtual scrolling
+const ROW_HEIGHT = 24; // px per row
+const OVERSCAN = 5; // extra rows to render above/below viewport
+const scrollContainerRef = ref<HTMLElement | null>(null);
+const scrollTop = ref(0);
+
+const totalRows = computed(() => dumpLines.value.length);
+const totalHeight = computed(() => totalRows.value * ROW_HEIGHT);
+
+const visibleRange = computed(() => {
+  const containerHeight = scrollContainerRef.value?.clientHeight || 400;
+  const start = Math.max(0, Math.floor(scrollTop.value / ROW_HEIGHT) - OVERSCAN);
+  const end = Math.min(
+    totalRows.value,
+    Math.ceil((scrollTop.value + containerHeight) / ROW_HEIGHT) + OVERSCAN,
+  );
+  return { start, end };
+});
+
+const visibleLines = computed(() => {
+  const { start, end } = visibleRange.value;
+  return dumpLines.value.slice(start, end).map((line, i) => ({
+    ...line,
+    _index: start + i,
+    _ref: line, // keep reference to original for modal editing
+  }));
+});
+
+const onScroll = (e: Event) => {
+  scrollTop.value = (e.target as HTMLElement).scrollTop;
+};
+
+// Register keyboard shortcuts and global handlers
+onMounted(() => {
+  document.addEventListener("keydown", onKeydown);
+  document.addEventListener("click", onDocumentClick, true);
+});
+
 // Clean up document-level event listeners on unmount
 onUnmounted(() => {
   document.removeEventListener("mousemove", onMouseMove);
   document.removeEventListener("mouseup", onMouseUp);
+  document.removeEventListener("keydown", onKeydown);
+  document.removeEventListener("click", onDocumentClick, true);
 });
 
 const props = defineProps<{
@@ -68,6 +136,404 @@ const modalState = reactive({
   currentAscii: "",
   originalAscii: "",
 });
+
+// Search state
+const searchState = reactive({
+  query: "",
+  mode: "hex" as "hex" | "ascii",
+  matches: [] as { byteOffset: number; length: number }[],
+  currentMatchIndex: -1,
+  showSearch: false,
+});
+
+// Precomputed highlight set for O(1) lookup
+const highlightedOffsets = ref(new Set<number>());
+
+// Perform search on rawData
+const performSearch = () => {
+  searchState.matches = [];
+  searchState.currentMatchIndex = -1;
+  highlightedOffsets.value = new Set();
+
+  const query = searchState.query.trim();
+  if (!query || rawData.value.length === 0) return;
+
+  let searchBytes: number[] = [];
+
+  if (searchState.mode === "hex") {
+    // Parse hex input: "FF D8 FF" or "ffd8ff"
+    const cleaned = query.replace(/\s+/g, "");
+    if (!/^[0-9a-fA-F]*$/.test(cleaned) || cleaned.length % 2 !== 0) return;
+    for (let i = 0; i < cleaned.length; i += 2) {
+      searchBytes.push(parseInt(cleaned.substring(i, i + 2), 16));
+    }
+  } else {
+    // ASCII mode
+    const encoder = new TextEncoder();
+    searchBytes = Array.from(encoder.encode(query));
+  }
+
+  if (searchBytes.length === 0) return;
+
+  // Find all occurrences in rawData
+  const data = rawData.value;
+  const offsets = new Set<number>();
+  for (let i = 0; i <= data.length - searchBytes.length; i++) {
+    let found = true;
+    for (let j = 0; j < searchBytes.length; j++) {
+      if (data[i + j] !== searchBytes[j]) {
+        found = false;
+        break;
+      }
+    }
+    if (found) {
+      searchState.matches.push({
+        byteOffset: i,
+        length: searchBytes.length,
+      });
+      for (let j = 0; j < searchBytes.length; j++) {
+        offsets.add(i + j);
+      }
+    }
+  }
+  highlightedOffsets.value = offsets;
+
+  if (searchState.matches.length > 0) {
+    searchState.currentMatchIndex = 0;
+  }
+};
+
+// Navigate to next/previous match
+const goToMatch = (direction: "next" | "prev") => {
+  if (searchState.matches.length === 0) return;
+  if (direction === "next") {
+    searchState.currentMatchIndex =
+      (searchState.currentMatchIndex + 1) % searchState.matches.length;
+  } else {
+    searchState.currentMatchIndex =
+      (searchState.currentMatchIndex - 1 + searchState.matches.length) %
+      searchState.matches.length;
+  }
+  scrollToCurrentMatch();
+};
+
+// Scroll virtual scroll container to center a given line index
+const scrollToLine = (lineIndex: number) => {
+  const container = scrollContainerRef.value;
+  if (!container) return;
+  const containerHeight = container.clientHeight;
+  const targetTop = lineIndex * ROW_HEIGHT - containerHeight / 2 + ROW_HEIGHT / 2;
+  container.scrollTo({ top: Math.max(0, targetTop), behavior: "smooth" });
+  scrollTop.value = Math.max(0, targetTop);
+};
+
+const scrollToCurrentMatch = () => {
+  if (searchState.currentMatchIndex < 0) return;
+  const match = searchState.matches[searchState.currentMatchIndex];
+  if (!match) return;
+  const lineIndex = Math.floor(match.byteOffset / bytesPerRow.value);
+  nextTick(() => scrollToLine(lineIndex));
+};
+
+// Check if a byte at a given global offset is part of any match (O(1) lookup)
+const isHighlighted = (globalByteOffset: number): boolean => {
+  return highlightedOffsets.value.has(globalByteOffset);
+};
+
+// Check if a byte is part of the current (focused) match
+const isCurrentMatch = (globalByteOffset: number): boolean => {
+  if (searchState.currentMatchIndex < 0) return false;
+  const m = searchState.matches[searchState.currentMatchIndex];
+  if (!m) return false;
+  return globalByteOffset >= m.byteOffset && globalByteOffset < m.byteOffset + m.length;
+};
+
+// Toggle search bar
+const toggleSearch = () => {
+  searchState.showSearch = !searchState.showSearch;
+  if (!searchState.showSearch) {
+    searchState.query = "";
+    searchState.matches = [];
+    searchState.currentMatchIndex = -1;
+  }
+};
+
+// Handle search input
+const onSearchInput = () => {
+  performSearch();
+};
+
+const onSearchKeydown = (e: KeyboardEvent) => {
+  if (e.key === "Enter") {
+    if (e.shiftKey) {
+      goToMatch("prev");
+    } else {
+      goToMatch("next");
+    }
+    e.preventDefault();
+  } else if (e.key === "Escape") {
+    toggleSearch();
+  }
+};
+
+// Go to offset state
+const gotoState = reactive({
+  showGoto: false,
+  input: "",
+  highlightedOffset: -1,
+});
+
+const goToOffset = () => {
+  const input = gotoState.input.trim();
+  if (!input) return;
+
+  let offset: number;
+  if (input.toLowerCase().startsWith("0x")) {
+    offset = parseInt(input, 16);
+  } else if (/[a-fA-F]/.test(input) && /^[0-9a-fA-F]+$/.test(input)) {
+    // Contains hex letters (A-F), treat as hex
+    offset = parseInt(input, 16);
+  } else {
+    offset = parseInt(input, 10);
+  }
+
+  if (isNaN(offset) || offset < 0 || offset >= rawData.value.length) {
+    gotoState.highlightedOffset = -1;
+    return;
+  }
+
+  gotoState.highlightedOffset = offset;
+  const lineIndex = Math.floor(offset / bytesPerRow.value);
+  nextTick(() => scrollToLine(lineIndex));
+};
+
+const toggleGoto = () => {
+  gotoState.showGoto = !gotoState.showGoto;
+  if (!gotoState.showGoto) {
+    gotoState.input = "";
+    gotoState.highlightedOffset = -1;
+  }
+};
+
+const onGotoKeydown = (e: KeyboardEvent) => {
+  if (e.key === "Enter") {
+    goToOffset();
+    e.preventDefault();
+  } else if (e.key === "Escape") {
+    toggleGoto();
+  }
+};
+
+// Check if a byte is the go-to target
+const isGotoHighlighted = (globalByteOffset: number): boolean => {
+  return gotoState.highlightedOffset === globalByteOffset;
+};
+
+// Byte selection and data interpretation panel
+const selectionState = reactive({
+  start: -1,
+  end: -1,
+});
+
+const selectedBytes = computed((): Uint8Array => {
+  if (selectionState.start < 0 || selectionState.end < 0) return new Uint8Array();
+  const s = Math.min(selectionState.start, selectionState.end);
+  const e = Math.max(selectionState.start, selectionState.end);
+  if (s >= rawData.value.length) return new Uint8Array();
+  return rawData.value.slice(s, Math.min(e + 1, rawData.value.length));
+});
+
+const hasSelection = computed(() => selectedBytes.value.length > 0);
+
+const onByteClick = (globalOffset: number, event: MouseEvent) => {
+  if (event.shiftKey && selectionState.start >= 0) {
+    selectionState.end = globalOffset;
+  } else {
+    selectionState.start = globalOffset;
+    selectionState.end = globalOffset;
+  }
+};
+
+const isSelected = (globalOffset: number): boolean => {
+  if (selectionState.start < 0 || selectionState.end < 0) return false;
+  const s = Math.min(selectionState.start, selectionState.end);
+  const e = Math.max(selectionState.start, selectionState.end);
+  return globalOffset >= s && globalOffset <= e;
+};
+
+const clearSelection = () => {
+  selectionState.start = -1;
+  selectionState.end = -1;
+};
+
+// Data interpretation computed
+const dataInterpretation = computed(() => {
+  const bytes = selectedBytes.value;
+  if (bytes.length === 0) return null;
+
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const result: Record<string, string> = {};
+
+  // Int8 / UInt8
+  if (bytes.length >= 1) {
+    result["UInt8"] = view.getUint8(0).toString();
+    result["Int8"] = view.getInt8(0).toString();
+  }
+
+  // Int16 / UInt16
+  if (bytes.length >= 2) {
+    result["UInt16 (BE)"] = view.getUint16(0, false).toString();
+    result["UInt16 (LE)"] = view.getUint16(0, true).toString();
+    result["Int16 (BE)"] = view.getInt16(0, false).toString();
+    result["Int16 (LE)"] = view.getInt16(0, true).toString();
+  }
+
+  // Int32 / UInt32
+  if (bytes.length >= 4) {
+    result["UInt32 (BE)"] = view.getUint32(0, false).toString();
+    result["UInt32 (LE)"] = view.getUint32(0, true).toString();
+    result["Int32 (BE)"] = view.getInt32(0, false).toString();
+    result["Int32 (LE)"] = view.getInt32(0, true).toString();
+    result["Float32 (BE)"] = view.getFloat32(0, false).toString();
+    result["Float32 (LE)"] = view.getFloat32(0, true).toString();
+  }
+
+  // Float64
+  if (bytes.length >= 8) {
+    result["Float64 (BE)"] = view.getFloat64(0, false).toString();
+    result["Float64 (LE)"] = view.getFloat64(0, true).toString();
+  }
+
+  // Binary
+  result["Binary"] = Array.from(bytes.slice(0, 8))
+    .map((b) => b.toString(2).padStart(8, "0"))
+    .join(" ");
+
+  // Encoding views
+  try {
+    const decoder = new TextDecoder("utf-8", { fatal: true });
+    result["UTF-8"] = decoder.decode(bytes);
+  } catch {
+    result["UTF-8"] = "(invalid)";
+  }
+
+  // Base64
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]!);
+  }
+  result["Base64"] = btoa(binary);
+
+  // URL-encoded
+  result["URL-encoded"] = Array.from(bytes)
+    .map((b) => "%" + b.toString(16).padStart(2, "0").toUpperCase())
+    .join("");
+
+  return result;
+});
+
+// HTTP structure highlighting
+const showStructureHighlight = ref(false);
+
+// Find the header/body boundary offset in rawData
+const httpBodyOffset = computed((): number => {
+  const data = rawData.value;
+  const crlfcrlf = [0x0d, 0x0a, 0x0d, 0x0a];
+  for (let i = 0; i <= data.length - 4; i++) {
+    if (data[i] === crlfcrlf[0] && data[i + 1] === crlfcrlf[1] &&
+        data[i + 2] === crlfcrlf[2] && data[i + 3] === crlfcrlf[3]) {
+      return i + 4; // body starts after \r\n\r\n
+    }
+  }
+  return -1; // no boundary found
+});
+
+const getStructureClass = (globalOffset: number): string => {
+  if (!showStructureHighlight.value || httpBodyOffset.value < 0) return "";
+  if (globalOffset < httpBodyOffset.value) {
+    return "bg-purple-500/15";
+  }
+  return "bg-emerald-500/15";
+};
+
+// Multi-format copy
+const showCopyMenu = ref(false);
+
+const getCopyBytes = (): Uint8Array => {
+  return hasSelection.value ? selectedBytes.value : rawData.value;
+};
+
+const copyAs = async (format: CopyFormat) => {
+  const bytes = getCopyBytes();
+  if (bytes.length === 0) return;
+
+  const text = formatBytes(bytes, format, bytesPerRow.value);
+
+  try {
+    await navigator.clipboard.writeText(text);
+    props.sdk.window?.showToast?.("Copied to clipboard", { variant: "success" });
+  } catch {
+    props.sdk.window?.showToast?.("Failed to copy", { variant: "error" });
+  }
+  showCopyMenu.value = false;
+};
+
+// Close copy menu on outside click
+const onDocumentClick = (e: MouseEvent) => {
+  if (showCopyMenu.value) {
+    const target = e.target as HTMLElement;
+    if (!target.closest("[data-copy-menu]")) {
+      showCopyMenu.value = false;
+    }
+  }
+};
+
+// Export raw binary data as file download
+const exportBinary = () => {
+  const bytes = hasSelection.value ? selectedBytes.value : rawData.value;
+  if (bytes.length === 0) return;
+
+  // Auto-suggest filename
+  let filename = "export.bin";
+  const path = props.request?.path || "";
+  if (path) {
+    const pathParts = path.split("/").filter(Boolean);
+    const lastPart = pathParts[pathParts.length - 1];
+    if (lastPart && lastPart.includes(".")) {
+      filename = lastPart.split("?")[0] || filename;
+    }
+  }
+  // Check Content-Disposition from parsed headers
+  if (parsedHttp.value?.headers) {
+    const disposition = parsedHttp.value.headers["Content-Disposition"] || parsedHttp.value.headers["content-disposition"];
+    if (disposition) {
+      const match = disposition.match(/filename[*]?=["']?([^"';\n]+)/i);
+      if (match?.[1]) {
+        filename = match[1];
+      }
+    }
+  }
+
+  // Check detected signature for extension
+  if (filename === "export.bin" && detectedSignature.value) {
+    const extMap: Record<string, string> = {
+      PNG: "png", JPEG: "jpg", "GIF87a": "gif", "GIF89a": "gif",
+      WebP: "webp", BMP: "bmp", PDF: "pdf", ZIP: "zip", GZIP: "gz",
+    };
+    const ext = extMap[detectedSignature.value];
+    if (ext) filename = `export.${ext}`;
+  }
+
+  const blob = new Blob([bytes], { type: "application/octet-stream" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
 
 // Edit mode removed, using per-line editing
 
@@ -160,8 +626,8 @@ const rawData = ref<Uint8Array>(new Uint8Array());
 
 // Initialize and watch for raw data changes
 watch(
-  raw,
-  (newRaw) => {
+  [raw, maxSizeBytes],
+  ([newRaw]) => {
     try {
       if (!newRaw) {
         rawData.value = new Uint8Array();
@@ -169,7 +635,9 @@ watch(
       }
 
       const rawStr =
-        newRaw.length > MAX_SIZE_BYTES ? newRaw.substring(0, MAX_SIZE_BYTES) : newRaw;
+        maxSizeBytes.value > 0 && newRaw.length > maxSizeBytes.value
+          ? newRaw.substring(0, maxSizeBytes.value)
+          : newRaw;
 
       // Assuming raw is UTF-8 encoded string, convert to Uint8Array
       const encoder = new TextEncoder();
@@ -185,6 +653,30 @@ watch(
   { immediate: true },
 );
 
+// Detect file signature in the body of the HTTP data
+const detectedSignature = computed(() => {
+  if (rawData.value.length === 0) return null;
+
+  // Try to find body start (after \r\n\r\n)
+  const crlfcrlf = [0x0d, 0x0a, 0x0d, 0x0a];
+  let bodyStart = -1;
+  for (let i = 0; i <= rawData.value.length - 4; i++) {
+    if (
+      rawData.value[i] === crlfcrlf[0] &&
+      rawData.value[i + 1] === crlfcrlf[1] &&
+      rawData.value[i + 2] === crlfcrlf[2] &&
+      rawData.value[i + 3] === crlfcrlf[3]
+    ) {
+      bodyStart = i + 4;
+      break;
+    }
+  }
+
+  // Check body bytes if found, otherwise check from start
+  const checkData = bodyStart > 0 ? rawData.value.slice(bodyStart) : rawData.value;
+  return detectFileSignature(checkData);
+});
+
 // Generate dump lines for table display
 const dumpLines = ref<
   { offset: string; hex: string; ascii: string; editing?: boolean }[]
@@ -192,7 +684,7 @@ const dumpLines = ref<
 
 // Update dump lines when rawData changes
 watch(
-  rawData,
+  [rawData, bytesPerRow, byteGrouping],
   () => {
     const data = rawData.value;
     if (data.length === 0) {
@@ -208,8 +700,8 @@ watch(
     }
 
     const lines = [];
-    for (let i = 0; i < data.length; i += BYTES_PER_ROW) {
-      const chunk = data.slice(i, i + BYTES_PER_ROW);
+    for (let i = 0; i < data.length; i += bytesPerRow.value) {
+      const chunk = data.slice(i, i + bytesPerRow.value);
       const offset = i.toString(16).padStart(8, "0");
       const hex = Array.from(chunk)
         .map((b) => b.toString(16).padStart(2, "0"))
@@ -223,6 +715,13 @@ watch(
   },
   { immediate: true },
 );
+
+// Re-run search when rawData changes (if search is active)
+watch(rawData, () => {
+  if (searchState.showSearch && searchState.query) {
+    performSearch();
+  }
+});
 
 // Update line and recalculate
 const updateLine = (line: {
@@ -247,10 +746,12 @@ const updateLine = (line: {
   rawData.value = new Uint8Array(newBytes);
 };
 
-// Check if data is truncated
+// Check if data is truncated (compare encoded byte length)
 const isTruncated = computed(() => {
   const rawStr = props?.request?.raw || props?.response?.raw;
-  return rawStr && rawStr.length > MAX_SIZE_BYTES;
+  if (!rawStr || maxSizeBytes.value === 0) return false;
+  const encoder = new TextEncoder();
+  return encoder.encode(rawStr).length > maxSizeBytes.value;
 });
 
 // Calculate diff between original and current hex values
@@ -336,21 +837,93 @@ const saveChanges = async () => {
       >
         <div class="flex items-center gap-2 text-surface-300">
           <i class="fas fa-hexagon text-primary-400"></i>
-          <span class="text-sm font-medium"
-            >{{ isRequest ? parsedHttp?.method || "GET" : "Response" }}
-            {{ props.request?.host || props.response?.host || "unknown"
-            }}{{ props.request?.path || "/" }}</span
-          >
           <span
             class="text-xs bg-primary-600 text-primary-100 px-2 py-0.5 rounded"
             >{{ rawData.length }} bytes{{
               isTruncated ? " (truncated)" : ""
             }}</span
           >
+          <span
+            v-if="detectedSignature"
+            class="text-xs bg-green-600 text-green-100 px-2 py-0.5 rounded"
+            :title="'Detected file signature: ' + detectedSignature"
+          >{{ detectedSignature }}</span>
         </div>
-        <div v-if="isReplayTab" class="flex gap-1">
+        <div class="flex gap-1">
           <button
-            v-if="isRequest"
+            class="px-3 py-1 text-xs rounded hover:bg-surface-700 text-surface-300"
+            title="Search (Ctrl+F)"
+            @click="toggleSearch"
+          >
+            <i class="fas fa-search"></i>
+          </button>
+          <button
+            class="px-3 py-1 text-xs rounded hover:bg-surface-700 text-surface-300"
+            title="Go to offset (Ctrl+G)"
+            @click="toggleGoto"
+          >
+            <i class="fas fa-map-marker-alt"></i>
+          </button>
+          <button
+            :class="[
+              'px-3 py-1 text-xs rounded hover:bg-surface-700',
+              showStructureHighlight ? 'text-primary-400' : 'text-surface-300',
+            ]"
+            title="Toggle HTTP structure highlighting"
+            @click="showStructureHighlight = !showStructureHighlight"
+          >
+            <i class="fas fa-layer-group"></i>
+          </button>
+          <div class="relative" data-copy-menu>
+            <button
+              class="px-3 py-1 text-xs rounded hover:bg-surface-700 text-surface-300"
+              title="Copy as..."
+              @click="showCopyMenu = !showCopyMenu"
+            >
+              <i class="fas fa-copy"></i>
+            </button>
+            <div
+              v-if="showCopyMenu"
+              class="absolute right-0 top-full mt-1 bg-surface-800 border border-surface-600 rounded shadow-lg z-10 min-w-[180px]"
+            >
+              <button class="w-full text-left px-3 py-1.5 text-xs text-surface-300 hover:bg-surface-700" @click="copyAs('raw-hex')">Raw hex</button>
+              <button class="w-full text-left px-3 py-1.5 text-xs text-surface-300 hover:bg-surface-700" @click="copyAs('spaced-hex')">Spaced hex</button>
+              <button class="w-full text-left px-3 py-1.5 text-xs text-surface-300 hover:bg-surface-700" @click="copyAs('c-array')">C array (\x...)</button>
+              <button class="w-full text-left px-3 py-1.5 text-xs text-surface-300 hover:bg-surface-700" @click="copyAs('python-bytes')">Python bytes</button>
+              <button class="w-full text-left px-3 py-1.5 text-xs text-surface-300 hover:bg-surface-700" @click="copyAs('json-array')">JSON array</button>
+              <button class="w-full text-left px-3 py-1.5 text-xs text-surface-300 hover:bg-surface-700" @click="copyAs('hexdump')">Hexdump</button>
+            </div>
+          </div>
+          <select
+            v-model.number="maxSizeBytes"
+            class="bg-surface-700 text-surface-300 text-xs rounded px-1 py-0.5 border border-surface-600 outline-none"
+            title="Max data size"
+          >
+            <option v-for="opt in MAX_SIZE_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+          </select>
+          <select
+            v-model.number="bytesPerRow"
+            class="bg-surface-700 text-surface-300 text-xs rounded px-1 py-0.5 border border-surface-600 outline-none"
+            title="Bytes per line"
+          >
+            <option v-for="opt in BYTES_PER_ROW_OPTIONS" :key="opt" :value="opt">{{ opt }}B/line</option>
+          </select>
+          <select
+            v-model.number="byteGrouping"
+            class="bg-surface-700 text-surface-300 text-xs rounded px-1 py-0.5 border border-surface-600 outline-none"
+            title="Byte grouping"
+          >
+            <option v-for="opt in BYTE_GROUP_OPTIONS" :key="opt" :value="opt">{{ opt === 1 ? '1 byte' : opt + ' bytes' }}</option>
+          </select>
+          <button
+            class="px-3 py-1 text-xs rounded hover:bg-surface-700 text-surface-300"
+            title="Export binary data"
+            @click="exportBinary"
+          >
+            <i class="fas fa-download"></i>
+          </button>
+          <button
+            v-if="isReplayTab && isRequest"
             class="px-3 py-1 text-xs rounded hover:bg-surface-700 text-primary-400"
             title="Save Changes"
             @click="saveChanges"
@@ -360,16 +933,137 @@ const saveChanges = async () => {
         </div>
       </div>
 
+      <!-- Search Bar -->
+      <div
+        v-if="searchState.showSearch"
+        class="flex items-center gap-2 px-3 py-2 border-b border-surface-600 bg-surface-750"
+      >
+        <div class="flex items-center gap-1 text-xs">
+          <button
+            :class="[
+              'px-2 py-0.5 rounded',
+              searchState.mode === 'hex'
+                ? 'bg-primary-600 text-primary-100'
+                : 'bg-surface-700 text-surface-300 hover:bg-surface-600',
+            ]"
+            @click="searchState.mode = 'hex'; onSearchInput()"
+          >
+            HEX
+          </button>
+          <button
+            :class="[
+              'px-2 py-0.5 rounded',
+              searchState.mode === 'ascii'
+                ? 'bg-primary-600 text-primary-100'
+                : 'bg-surface-700 text-surface-300 hover:bg-surface-600',
+            ]"
+            @click="searchState.mode = 'ascii'; onSearchInput()"
+          >
+            ASCII
+          </button>
+        </div>
+        <input
+          v-model="searchState.query"
+          :placeholder="
+            searchState.mode === 'hex'
+              ? 'Search hex (e.g., FF D8 FF E0)'
+              : 'Search ASCII (e.g., Content-Type)'
+          "
+          class="flex-1 bg-surface-900 text-surface-300 px-3 py-1 rounded border border-surface-600 text-xs font-mono outline-none focus:border-primary-500"
+          @input="onSearchInput"
+          @keydown="onSearchKeydown"
+        />
+        <div class="flex items-center gap-1">
+          <span class="text-xs text-surface-400 min-w-[60px] text-center">
+            <template v-if="searchState.matches.length > 0">
+              {{ searchState.currentMatchIndex + 1 }}/{{ searchState.matches.length }}
+            </template>
+            <template v-else-if="searchState.query.trim()">
+              No match
+            </template>
+          </span>
+          <button
+            class="px-2 py-0.5 text-xs rounded hover:bg-surface-600 text-surface-300 disabled:opacity-30"
+            :disabled="searchState.matches.length === 0"
+            title="Previous (Shift+Enter)"
+            @click="goToMatch('prev')"
+          >
+            <i class="fas fa-chevron-up"></i>
+          </button>
+          <button
+            class="px-2 py-0.5 text-xs rounded hover:bg-surface-600 text-surface-300 disabled:opacity-30"
+            :disabled="searchState.matches.length === 0"
+            title="Next (Enter)"
+            @click="goToMatch('next')"
+          >
+            <i class="fas fa-chevron-down"></i>
+          </button>
+          <button
+            class="px-2 py-0.5 text-xs rounded hover:bg-surface-600 text-surface-300"
+            title="Close (Esc)"
+            @click="toggleSearch"
+          >
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Go to Offset Bar -->
+      <div
+        v-if="gotoState.showGoto"
+        class="flex items-center gap-2 px-3 py-2 border-b border-surface-600 bg-surface-750"
+      >
+        <span class="text-xs text-surface-400">Go to offset:</span>
+        <input
+          v-model="gotoState.input"
+          placeholder="Hex (0x0A3F) or decimal (2623)"
+          class="flex-1 max-w-xs bg-surface-900 text-surface-300 px-3 py-1 rounded border border-surface-600 text-xs font-mono outline-none focus:border-primary-500"
+          @keydown="onGotoKeydown"
+        />
+        <button
+          class="px-3 py-0.5 text-xs rounded bg-primary-600 text-primary-100 hover:bg-primary-500"
+          @click="goToOffset"
+        >
+          Go
+        </button>
+        <span
+          v-if="gotoState.input.trim() && gotoState.highlightedOffset < 0"
+          class="text-xs text-red-400"
+        >
+          Invalid offset
+        </span>
+        <button
+          class="px-2 py-0.5 text-xs rounded hover:bg-surface-600 text-surface-300 ml-auto"
+          title="Close (Esc)"
+          @click="toggleGoto"
+        >
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+
       <!-- Content - Flexible height -->
-      <div class="flex-1 min-h-0 overflow-auto p-2">
-        <!-- Hex Dump Table -->
-        <div class="h-full overflow-auto">
-          <table class="w-full text-xs font-mono bg-surface-900">
-            <tbody>
-              <tr
-                v-for="(line, index) in dumpLines"
-                :key="index"
-                class="hover:bg-surface-700"
+      <div class="flex-1 min-h-0 p-2">
+        <!-- Hex Dump Table with Virtual Scrolling -->
+        <div
+          ref="scrollContainerRef"
+          class="h-full overflow-auto"
+          @scroll="onScroll"
+        >
+          <div :style="{ height: totalHeight + 'px', position: 'relative' }">
+            <table
+              class="w-full text-xs font-mono bg-surface-900"
+              :style="{ position: 'absolute', top: (visibleRange.start * ROW_HEIGHT) + 'px', width: '100%' }"
+            >
+              <tbody>
+                <tr
+                  v-for="line in visibleLines"
+                  :key="line._index"
+                  :data-hex-row="line._index"
+                  :class="[
+                    'hover:bg-surface-700',
+                    getStructureClass(line._index * bytesPerRow),
+                  ]"
+                  :style="{ height: ROW_HEIGHT + 'px' }"
               >
                 <td
                   class="px-2 py-1 text-surface-400 border-r border-surface-600 relative"
@@ -386,29 +1080,79 @@ const saveChanges = async () => {
                 <td
                   class="px-2 py-1 border-r border-surface-600 relative"
                   :style="{ width: columnWidths.hex + 'px' }"
+                  @dblclick="openEditModal(line._ref)"
                 >
-                  <input
-                    :value="line.hex"
-                    readonly
-                    :class="['w-full bg-transparent text-surface-300 border-none outline-none', isEditable ? 'cursor-pointer' : 'cursor-default']"
-                    @dblclick="openEditModal(line)"
-                  />
+                  <span class="font-mono whitespace-pre" :class="isEditable ? 'cursor-pointer' : 'cursor-default'">
+                    <template v-for="(byte, bIdx) in line.hex.split(' ')" :key="bIdx">
+                      <span v-if="bIdx > 0">{{ bIdx % byteGrouping === 0 ? ' ' : '' }}</span>
+                      <span
+                        :class="{
+                          'bg-yellow-500/30 text-yellow-200': isHighlighted(line._index * bytesPerRow + bIdx) && !isCurrentMatch(line._index * bytesPerRow + bIdx),
+                          'bg-orange-500/50 text-orange-100': isCurrentMatch(line._index * bytesPerRow + bIdx),
+                          'bg-cyan-500/50 text-cyan-100 ring-1 ring-cyan-400': isGotoHighlighted(line._index * bytesPerRow + bIdx),
+                          'bg-blue-500/40 text-blue-100': isSelected(line._index * bytesPerRow + bIdx) && !isHighlighted(line._index * bytesPerRow + bIdx) && !isCurrentMatch(line._index * bytesPerRow + bIdx) && !isGotoHighlighted(line._index * bytesPerRow + bIdx),
+                        }"
+                        class="cursor-pointer"
+                        @click.stop="onByteClick(line._index * bytesPerRow + bIdx, $event)"
+                      >{{ byte }}</span>
+                    </template>
+                  </span>
                   <div
                     class="absolute right-0 top-0 bottom-0 w-1 bg-surface-600 cursor-col-resize"
                     @mousedown="startResize('hex', $event)"
                   ></div>
                 </td>
                 <td
-                  class="px-2 py-1 text-surface-300"
+                  class="px-2 py-1"
                   :style="{
                     width: columnWidths.ascii + 'px',
                   }"
                 >
-                  {{ line.ascii }}
+                  <span class="font-mono">
+                    <template v-for="(char, cIdx) in line.ascii.split('')" :key="cIdx">
+                      <span
+                        :class="{
+                          'text-surface-300': !isHighlighted(line._index * bytesPerRow + cIdx) && !isGotoHighlighted(line._index * bytesPerRow + cIdx) && !isSelected(line._index * bytesPerRow + cIdx),
+                          'bg-yellow-500/30 text-yellow-200': isHighlighted(line._index * bytesPerRow + cIdx) && !isCurrentMatch(line._index * bytesPerRow + cIdx),
+                          'bg-orange-500/50 text-orange-100': isCurrentMatch(line._index * bytesPerRow + cIdx),
+                          'bg-cyan-500/50 text-cyan-100 ring-1 ring-cyan-400': isGotoHighlighted(line._index * bytesPerRow + cIdx),
+                          'bg-blue-500/40 text-blue-100': isSelected(line._index * bytesPerRow + cIdx) && !isHighlighted(line._index * bytesPerRow + cIdx) && !isCurrentMatch(line._index * bytesPerRow + cIdx) && !isGotoHighlighted(line._index * bytesPerRow + cIdx),
+                        }"
+                        class="cursor-pointer"
+                        @click.stop="onByteClick(line._index * bytesPerRow + cIdx, $event)"
+                      >{{ char }}</span>
+                    </template>
+                  </span>
                 </td>
               </tr>
             </tbody>
           </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Data Interpretation Panel -->
+      <div
+        v-if="hasSelection && dataInterpretation"
+        class="border-t border-surface-600 bg-surface-800 px-3 py-2 flex-shrink-0 max-h-40 overflow-auto"
+      >
+        <div class="flex items-center justify-between mb-1">
+          <span class="text-xs text-surface-400 font-medium">
+            Data Inspector — {{ selectedBytes.length }} byte(s) selected
+            (offset {{ Math.min(selectionState.start, selectionState.end).toString(16).padStart(8, "0") }})
+          </span>
+          <button
+            class="text-xs text-surface-500 hover:text-surface-300 px-1"
+            @click="clearSelection"
+          >
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-4 gap-y-0.5 text-xs font-mono">
+          <div v-for="(value, key) in dataInterpretation" :key="key" class="flex justify-between gap-2">
+            <span class="text-surface-500 whitespace-nowrap">{{ key }}:</span>
+            <span class="text-surface-300 truncate" :title="value">{{ value }}</span>
+          </div>
         </div>
       </div>
 
@@ -418,12 +1162,13 @@ const saveChanges = async () => {
       >
         <div class="flex items-center gap-3 text-surface-400">
           <span class="flex items-center gap-1">
-            <i class="fas fa-server"></i>
-            {{ props.request?.host || props.response?.host || "unknown" }}
-          </span>
-          <span class="flex items-center gap-1">
             <i class="fas fa-file"></i>
             {{ rawData.length }} bytes
+          </span>
+          <span v-if="hasSelection" class="flex items-center gap-1 text-blue-400">
+            <i class="fas fa-mouse-pointer"></i>
+            {{ Math.min(selectionState.start, selectionState.end).toString(16).padStart(8, "0") }}-{{ Math.max(selectionState.start, selectionState.end).toString(16).padStart(8, "0") }}
+            ({{ selectedBytes.length }} bytes)
           </span>
         </div>
         <div class="text-primary-400 font-medium">HEX</div>
