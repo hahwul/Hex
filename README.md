@@ -1,39 +1,29 @@
 # Hex
 
-A Hex Viewer & Editor plugin for [Caido](https://caido.io/) that adds hex viewing and editing to the History and Replay tabs.
+A Hex Viewer & Editor plugin for [Caido](https://caido.io/).
 
 ![](images/screenshot.jpg)
 
 ## Features
 
-- **Hex Viewer** (History, Replay tabs)
-- **Hex Editor** (History, Replay tabs)
+- **Hex Viewer** — View hex representation of request/response bodies in History and Replay tabs
+- **Hex Editor** — Double-click any line to edit hex values directly
 
 ![](images/edit.jpg)
-*Double-click any line in the hex view to edit its contents directly.*
 
 ## Installation
 
-### From the Community Store (Recommended)
+### Community Store (Recommended)
 
-Getting Hex up and running is a breeze.
+1. Go to **Plugins** > **Community Store** in Caido.
+2. Search **"Hex"** and click **Install**. ✨
 
-1. Head over to the **Plugins** page in Caido.
-2. Open the **Community Store**.
-3. Type **"Hex"** into the search bar.
-4. Click **Install**, and you're all set! ✨
+### Manual
 
-### The old-school way (Manual)
-
-If you prefer to do things by hand, we've got you covered.
-
-1. Grab the latest `plugin_package.zip` from our [Releases page](https://github.com/hahwul/Hex/releases).
-2. In Caido, go to the **Plugins** page.
-3. Click **Install Package** and select the file you just downloaded.
+1. Download `plugin_package.zip` from the [Releases page](https://github.com/hahwul/Hex/releases).
+2. Go to **Plugins** > **Install Package** and select the file.
 
 ## Development
-
-To build the plugin from the source code:
 
 ```bash
 git clone https://github.com/hahwul/Hex
@@ -42,27 +32,14 @@ pnpm install
 pnpm build
 ```
 
-### Running Tests
-
-The project includes comprehensive unit tests for the core functionality:
-
-```bash
-# Run all tests
-pnpm test
-
-# Run tests with coverage report
-pnpm test:coverage
-```
-
-### Linting and Type Checking
-
-```bash
-# Run linter
-pnpm lint
-
-# Run type checker
-pnpm typecheck
-```
+| Command | Description |
+|---------|-------------|
+| `pnpm build` | Build the plugin |
+| `pnpm watch` | Build with hot-reload |
+| `pnpm test` | Run all tests |
+| `pnpm test:coverage` | Run tests with coverage |
+| `pnpm lint` | Run linter |
+| `pnpm typecheck` | Run type checker |
 
 ## Important Note
 
