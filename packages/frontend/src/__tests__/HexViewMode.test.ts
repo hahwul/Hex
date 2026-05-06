@@ -1032,5 +1032,370 @@ describe("HexViewMode.vue", () => {
       expect(menu.text()).toContain("JSON array");
       expect(menu.text()).toContain("Hexdump");
     });
+
+    it("copies bytes to clipboard and shows success toast", async () => {
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      Object.defineProperty(navigator, "clipboard", {
+        value: { writeText },
+        writable: true,
+        configurable: true,
+      });
+
+      const wrapper = mount(HexViewMode, {
+        props: {
+          ...defaultProps,
+          request: { raw: "Hi", host: "test", path: "/" },
+        },
+      });
+
+      await wrapper.find("button[title='Copy as...']").trigger("click");
+      const rawHexBtn = wrapper
+        .findAll("[data-copy-menu] button")
+        .find((b) => b.text() === "Raw hex");
+      await rawHexBtn?.trigger("click");
+      // wait microtask for the awaited writeText
+      await Promise.resolve();
+
+      expect(writeText).toHaveBeenCalledWith("4869");
+      expect(mockSdk.window.showToast).toHaveBeenCalledWith(
+        "Copied to clipboard",
+        { variant: "success" }
+      );
+    });
+
+    it("shows error toast when clipboard write fails", async () => {
+      const writeText = vi.fn().mockRejectedValue(new Error("denied"));
+      Object.defineProperty(navigator, "clipboard", {
+        value: { writeText },
+        writable: true,
+        configurable: true,
+      });
+
+      const wrapper = mount(HexViewMode, {
+        props: {
+          ...defaultProps,
+          request: { raw: "Hi", host: "test", path: "/" },
+        },
+      });
+
+      await wrapper.find("button[title='Copy as...']").trigger("click");
+      const rawHexBtn = wrapper
+        .findAll("[data-copy-menu] button")
+        .find((b) => b.text() === "Raw hex");
+      await rawHexBtn?.trigger("click");
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockSdk.window.showToast).toHaveBeenCalledWith(
+        "Failed to copy",
+        { variant: "error" }
+      );
+    });
+  });
+
+  describe("Go to Offset (hex without 0x prefix)", () => {
+    it("treats input with hex letters as hex offset", async () => {
+      const raw = "A".repeat(64);
+      const wrapper = mount(HexViewMode, {
+        props: {
+          ...defaultProps,
+          request: { raw, host: "test", path: "/" },
+        },
+      });
+
+      await wrapper.find("button[title*='Go to offset']").trigger("click");
+      const input = wrapper.find("input[placeholder*='Hex (0x']");
+      // "1A" should be parsed as hex (26)
+      await input.setValue("1A");
+      const goBtn = wrapper.findAll("button").find((b) => b.text() === "Go");
+      await goBtn?.trigger("click");
+
+      const highlighted = wrapper.findAll("span.bg-cyan-500\\/50");
+      expect(highlighted.length).toBeGreaterThan(0);
+    });
+
+    it("returns invalid for empty input on Go", async () => {
+      const wrapper = mount(HexViewMode, {
+        props: {
+          ...defaultProps,
+          request: { raw: "Hello", host: "test", path: "/" },
+        },
+      });
+
+      await wrapper.find("button[title*='Go to offset']").trigger("click");
+      const goBtn = wrapper.findAll("button").find((b) => b.text() === "Go");
+      await goBtn?.trigger("click");
+
+      // No "Invalid offset" message because input is empty (early-return)
+      expect(wrapper.text()).not.toContain("Invalid offset");
+      expect(wrapper.findAll("span.bg-cyan-500\\/50").length).toBe(0);
+    });
+  });
+
+  describe("File Signature Detection", () => {
+    it("displays detected signature badge in toolbar", async () => {
+      // Use PDF signature ("%PDF") since its bytes are all printable ASCII and
+      // survive TextEncoder UTF-8 encoding without expansion.
+      const raw = "HTTP/1.1 200 OK\r\nContent-Type: application/pdf\r\n\r\n%PDF-1.4";
+
+      const wrapper = mount(HexViewMode, {
+        props: {
+          ...defaultProps,
+          response: { raw, host: "test" },
+        },
+      });
+
+      const badge = wrapper.find("[title*='Detected file signature']");
+      expect(badge.exists()).toBe(true);
+      expect(badge.text()).toBe("PDF");
+    });
+
+    it("does not display badge when no signature is detected", async () => {
+      const wrapper = mount(HexViewMode, {
+        props: {
+          ...defaultProps,
+          request: { raw: "GET / HTTP/1.1\r\n\r\nplain text", host: "test", path: "/" },
+        },
+      });
+
+      expect(wrapper.find("[title*='Detected file signature']").exists()).toBe(
+        false
+      );
+    });
+  });
+
+  describe("Layout options", () => {
+    it("changes the number of rows when bytesPerRow is updated", async () => {
+      // 32 bytes -> 2 rows at 16/row, 4 rows at 8/row
+      const wrapper = mount(HexViewMode, {
+        props: {
+          ...defaultProps,
+          request: { raw: "A".repeat(32), host: "test", path: "/" },
+        },
+      });
+
+      expect(wrapper.findAll("tr[data-hex-row]").length).toBe(2);
+
+      const bytesPerRowSelect = wrapper.find("select[title='Bytes per line']");
+      const selectEl = bytesPerRowSelect.element as HTMLSelectElement;
+      selectEl.value = "8";
+      await bytesPerRowSelect.trigger("change");
+      await wrapper.vm.$nextTick();
+
+      expect(wrapper.findAll("tr[data-hex-row]").length).toBe(4);
+    });
+
+    it("renders byte grouping options", async () => {
+      const wrapper = mount(HexViewMode, {
+        props: {
+          ...defaultProps,
+          request: { raw: "ABCDEFGH", host: "test", path: "/" },
+        },
+      });
+
+      const groupingSelect = wrapper.find("select[title='Byte grouping']");
+      const optionTexts = groupingSelect
+        .findAll("option")
+        .map((o) => o.text());
+      expect(optionTexts).toEqual(["1 byte", "2 bytes", "4 bytes", "8 bytes"]);
+    });
+
+    it("changes the maximum data size when option is updated", async () => {
+      // String fits within 10KB but exceeds when set to a smaller cap
+      const raw = "a".repeat(20000);
+      const wrapper = mount(HexViewMode, {
+        props: {
+          ...defaultProps,
+          request: { raw, host: "test", path: "/" },
+        },
+      });
+
+      // Initially 10KB cap -> truncated
+      expect(wrapper.text()).toContain("(truncated)");
+
+      // Switch to Unlimited (0) -> no truncation
+      const sizeSelect = wrapper.find("select[title='Max data size']");
+      await sizeSelect.setValue(0);
+
+      expect(wrapper.text()).not.toContain("(truncated)");
+    });
+  });
+
+  describe("Global keyboard shortcuts", () => {
+    it("opens search bar with Ctrl+F", async () => {
+      const wrapper = mount(HexViewMode, {
+        props: {
+          ...defaultProps,
+          request: { raw: "Hello", host: "test", path: "/" },
+        },
+      });
+
+      expect(wrapper.find("input[placeholder*='Search']").exists()).toBe(false);
+
+      const event = new KeyboardEvent("keydown", { key: "f", ctrlKey: true });
+      document.dispatchEvent(event);
+      await wrapper.vm.$nextTick();
+
+      expect(wrapper.find("input[placeholder*='Search']").exists()).toBe(true);
+      wrapper.unmount();
+    });
+
+    it("opens go-to-offset bar with Ctrl+G", async () => {
+      const wrapper = mount(HexViewMode, {
+        props: {
+          ...defaultProps,
+          request: { raw: "Hello", host: "test", path: "/" },
+        },
+      });
+
+      expect(wrapper.find("input[placeholder*='Hex (0x']").exists()).toBe(false);
+
+      const event = new KeyboardEvent("keydown", { key: "g", ctrlKey: true });
+      document.dispatchEvent(event);
+      await wrapper.vm.$nextTick();
+
+      expect(wrapper.find("input[placeholder*='Hex (0x']").exists()).toBe(true);
+      wrapper.unmount();
+    });
+
+    it("ignores unrelated keys", async () => {
+      const wrapper = mount(HexViewMode, {
+        props: {
+          ...defaultProps,
+          request: { raw: "Hello", host: "test", path: "/" },
+        },
+      });
+
+      const event = new KeyboardEvent("keydown", { key: "a", ctrlKey: true });
+      document.dispatchEvent(event);
+      await wrapper.vm.$nextTick();
+
+      expect(wrapper.find("input[placeholder*='Search']").exists()).toBe(false);
+      expect(wrapper.find("input[placeholder*='Hex (0x']").exists()).toBe(false);
+      wrapper.unmount();
+    });
+
+    it("removes keydown listener on unmount", async () => {
+      const wrapper = mount(HexViewMode, {
+        props: {
+          ...defaultProps,
+          request: { raw: "Hello", host: "test", path: "/" },
+        },
+      });
+
+      wrapper.unmount();
+
+      // After unmount, dispatching Ctrl+F should not throw nor mutate anything observable
+      const event = new KeyboardEvent("keydown", { key: "f", ctrlKey: true });
+      expect(() => document.dispatchEvent(event)).not.toThrow();
+    });
+  });
+
+  describe("Export Binary", () => {
+    let createObjectURLMock: ReturnType<typeof vi.fn>;
+    let revokeObjectURLMock: ReturnType<typeof vi.fn>;
+    let clickMock: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      createObjectURLMock = vi.fn(() => "blob:mock");
+      revokeObjectURLMock = vi.fn();
+      Object.defineProperty(URL, "createObjectURL", {
+        value: createObjectURLMock,
+        writable: true,
+        configurable: true,
+      });
+      Object.defineProperty(URL, "revokeObjectURL", {
+        value: revokeObjectURLMock,
+        writable: true,
+        configurable: true,
+      });
+      clickMock = vi.fn();
+      // Stub anchor click so jsdom/happy-dom doesn't try to navigate
+      HTMLAnchorElement.prototype.click = clickMock;
+    });
+
+    it("triggers a download with default filename when path has no extension", async () => {
+      const wrapper = mount(HexViewMode, {
+        props: {
+          ...defaultProps,
+          request: { raw: "Hello", host: "test", path: "/api" },
+        },
+      });
+
+      await wrapper.find("button[title='Export binary data']").trigger("click");
+
+      expect(createObjectURLMock).toHaveBeenCalledTimes(1);
+      expect(clickMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("uses path basename as filename when it has an extension", async () => {
+      const wrapper = mount(HexViewMode, {
+        props: {
+          ...defaultProps,
+          request: { raw: "data", host: "test", path: "/files/photo.png" },
+        },
+      });
+
+      // Spy on the dynamically-created anchor's `download` attribute
+      const originalCreate = document.createElement.bind(document);
+      const createSpy = vi
+        .spyOn(document, "createElement")
+        .mockImplementation((tag: string) => {
+          const el = originalCreate(tag);
+          return el;
+        });
+
+      await wrapper.find("button[title='Export binary data']").trigger("click");
+
+      const anchor = createSpy.mock.results
+        .map((r) => r.value as HTMLElement)
+        .find((el) => el instanceof HTMLAnchorElement) as
+        | HTMLAnchorElement
+        | undefined;
+
+      expect(anchor?.download).toBe("photo.png");
+      createSpy.mockRestore();
+    });
+
+    it("uses Content-Disposition filename when present", async () => {
+      const raw =
+        'HTTP/1.1 200 OK\r\nContent-Disposition: attachment; filename="report.csv"\r\n\r\ndata';
+      const wrapper = mount(HexViewMode, {
+        props: {
+          ...defaultProps,
+          response: { raw, host: "test" },
+        },
+      });
+
+      const originalCreate = document.createElement.bind(document);
+      const createSpy = vi
+        .spyOn(document, "createElement")
+        .mockImplementation((tag: string) => originalCreate(tag));
+
+      await wrapper.find("button[title='Export binary data']").trigger("click");
+
+      const anchor = createSpy.mock.results
+        .map((r) => r.value as HTMLElement)
+        .find((el) => el instanceof HTMLAnchorElement) as
+        | HTMLAnchorElement
+        | undefined;
+
+      expect(anchor?.download).toBe("report.csv");
+      createSpy.mockRestore();
+    });
+
+    it("does nothing when there is no data to export", async () => {
+      const wrapper = mount(HexViewMode, {
+        props: {
+          ...defaultProps,
+          request: { raw: "", host: "", path: "" },
+        },
+      });
+
+      await wrapper.find("button[title='Export binary data']").trigger("click");
+
+      expect(createObjectURLMock).not.toHaveBeenCalled();
+      expect(clickMock).not.toHaveBeenCalled();
+    });
   });
 });

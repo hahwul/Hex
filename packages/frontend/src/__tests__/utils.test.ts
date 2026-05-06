@@ -269,6 +269,101 @@ describe("utils", () => {
       const data = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x41, 0x56, 0x45]);
       expect(detectFileSignature(data)).not.toBe("WebP");
     });
+
+    it("should detect GIF87a signature", () => {
+      const data = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x37, 0x61]);
+      expect(detectFileSignature(data)).toBe("GIF87a");
+    });
+
+    it("should detect BMP signature", () => {
+      const data = new Uint8Array([0x42, 0x4d, 0x36, 0x00]);
+      expect(detectFileSignature(data)).toBe("BMP");
+    });
+
+    it("should detect ICO signature", () => {
+      const data = new Uint8Array([0x00, 0x00, 0x01, 0x00, 0x01, 0x00]);
+      expect(detectFileSignature(data)).toBe("ICO");
+    });
+
+    it("should detect TIFF (BE) signature", () => {
+      const data = new Uint8Array([0x4d, 0x4d, 0x00, 0x2a]);
+      expect(detectFileSignature(data)).toBe("TIFF (BE)");
+    });
+
+    it("should detect TIFF (LE) signature", () => {
+      const data = new Uint8Array([0x49, 0x49, 0x2a, 0x00]);
+      expect(detectFileSignature(data)).toBe("TIFF (LE)");
+    });
+
+    it("should detect RAR signature", () => {
+      const data = new Uint8Array([0x52, 0x61, 0x72, 0x21, 0x1a, 0x07]);
+      expect(detectFileSignature(data)).toBe("RAR");
+    });
+
+    it("should detect 7z signature", () => {
+      const data = new Uint8Array([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c]);
+      expect(detectFileSignature(data)).toBe("7z");
+    });
+
+    it("should detect TAR signature at offset 257", () => {
+      // TAR has a "ustar" magic at byte offset 257
+      const data = new Uint8Array(512);
+      data[257] = 0x75;
+      data[258] = 0x73;
+      data[259] = 0x74;
+      data[260] = 0x61;
+      data[261] = 0x72;
+      expect(detectFileSignature(data)).toBe("TAR");
+    });
+
+    it("should not detect TAR when buffer is shorter than offset", () => {
+      const data = new Uint8Array([0x75, 0x73, 0x74, 0x61, 0x72]);
+      expect(detectFileSignature(data)).toBeNull();
+    });
+
+    it("should detect Mach-O (32) signature", () => {
+      const data = new Uint8Array([0xfe, 0xed, 0xfa, 0xce]);
+      expect(detectFileSignature(data)).toBe("Mach-O (32)");
+    });
+
+    it("should detect Mach-O (64) signature", () => {
+      const data = new Uint8Array([0xfe, 0xed, 0xfa, 0xcf]);
+      expect(detectFileSignature(data)).toBe("Mach-O (64)");
+    });
+
+    it("should detect WASM signature", () => {
+      const data = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00]);
+      expect(detectFileSignature(data)).toBe("WASM");
+    });
+
+    it("should detect SQLite signature", () => {
+      const data = new Uint8Array([
+        0x53, 0x51, 0x4c, 0x69, 0x74, 0x65, 0x20, 0x66,
+        0x6f, 0x72, 0x6d, 0x61, 0x74, 0x20, 0x33, 0x00,
+      ]);
+      expect(detectFileSignature(data)).toBe("SQLite");
+    });
+
+    it("should detect FLAC signature", () => {
+      const data = new Uint8Array([0x66, 0x4c, 0x61, 0x43]);
+      expect(detectFileSignature(data)).toBe("FLAC");
+    });
+
+    it("should detect OGG signature", () => {
+      const data = new Uint8Array([0x4f, 0x67, 0x67, 0x53]);
+      expect(detectFileSignature(data)).toBe("OGG");
+    });
+
+    it("should detect MP3 (ID3) signature", () => {
+      const data = new Uint8Array([0x49, 0x44, 0x33, 0x03]);
+      expect(detectFileSignature(data)).toBe("MP3 (ID3)");
+    });
+
+    it("should not detect WebP when buffer is shorter than 12 bytes", () => {
+      // Starts with RIFF but truncated before WEBP marker
+      const data = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00]);
+      expect(detectFileSignature(data)).toBeNull();
+    });
   });
 
   describe("formatBytes", () => {
@@ -319,6 +414,24 @@ describe("utils", () => {
       const data = new Uint8Array([0x00, 0x41, 0x7f]);
       const result = formatBytes(data, "hexdump");
       expect(result).toContain(".A.");
+    });
+
+    it("should pad hex column to align ASCII when last row is partial", () => {
+      // 5 bytes, 16 bytes per row -> hex column should be padded
+      const result = formatBytes(hello, "hexdump", 16);
+      // Hex column width is bytesPerRow * 3 - 1 = 47 chars; ascii follows after two spaces
+      const lines = result.split("\n");
+      expect(lines.length).toBe(1);
+      // The ascii portion should appear at the same offset regardless of row fill level
+      expect(lines[0]?.endsWith("Hello")).toBe(true);
+    });
+
+    it("should format hexdump offset in 8-digit hex", () => {
+      const data = new Uint8Array(20);
+      const result = formatBytes(data, "hexdump", 16);
+      const lines = result.split("\n");
+      expect(lines[0]?.startsWith("00000000")).toBe(true);
+      expect(lines[1]?.startsWith("00000010")).toBe(true);
     });
   });
 });
