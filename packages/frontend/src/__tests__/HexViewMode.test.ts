@@ -1311,7 +1311,7 @@ describe("HexViewMode.vue", () => {
       });
       clickMock = vi.fn();
       // Stub anchor click so jsdom/happy-dom doesn't try to navigate
-      HTMLAnchorElement.prototype.click = clickMock;
+      HTMLAnchorElement.prototype.click = clickMock as unknown as () => void;
     });
 
     it("triggers a download with default filename when path has no extension", async () => {
