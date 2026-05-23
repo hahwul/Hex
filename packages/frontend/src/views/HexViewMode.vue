@@ -5,7 +5,18 @@
  * Ensures proper CRLF line endings for HTTP protocol compliance
  */
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue";
-import { hexToAscii, asciiToHex, parseHttpRaw, ensureCRLF, detectFileSignature, formatBytes } from "../utils";
+import {
+  hexToAscii,
+  asciiToHex,
+  parseHttpRaw,
+  ensureCRLF,
+  detectFileSignature,
+  formatBytes,
+  findHttpBodyOffset,
+  encodeUtf8WithLimit,
+  parseContentDispositionFilename,
+  sanitizeFilename,
+} from "../utils";
 import type { CopyFormat } from "../utils";
 
 const MAX_SIZE_OPTIONS = [
@@ -54,16 +65,37 @@ const onMouseUp = () => {
   document.removeEventListener("mouseup", onMouseUp);
 };
 
+// Reference to this component's root so we can scope keyboard shortcuts.
+const rootRef = ref<HTMLElement | null>(null);
+
+// Don't hijack Ctrl+F/Ctrl+G when the user is typing in an unrelated input
+// (e.g. an editor elsewhere in the app). Inputs inside our own component
+// are still allowed so the shortcut works while the search bar has focus.
+const shouldHandleShortcut = (): boolean => {
+  const active = document.activeElement;
+  if (!active || active === document.body) return true;
+  const tag = active.tagName;
+  const editable =
+    tag === "INPUT" ||
+    tag === "TEXTAREA" ||
+    tag === "SELECT" ||
+    (active as HTMLElement).isContentEditable === true;
+  if (!editable) return true;
+  return rootRef.value?.contains(active) ?? false;
+};
+
 // Keyboard shortcuts handler
 const onKeydown = (e: KeyboardEvent) => {
   // Ctrl+F: Open search
   if ((e.ctrlKey || e.metaKey) && e.key === "f") {
+    if (!shouldHandleShortcut()) return;
     e.preventDefault();
     if (!searchState.showSearch) toggleSearch();
     return;
   }
   // Ctrl+G: Open go to offset
   if ((e.ctrlKey || e.metaKey) && e.key === "g") {
+    if (!shouldHandleShortcut()) return;
     e.preventDefault();
     if (!gotoState.showGoto) toggleGoto();
     return;
@@ -436,17 +468,7 @@ const dataInterpretation = computed(() => {
 const showStructureHighlight = ref(false);
 
 // Find the header/body boundary offset in rawData
-const httpBodyOffset = computed((): number => {
-  const data = rawData.value;
-  const crlfcrlf = [0x0d, 0x0a, 0x0d, 0x0a];
-  for (let i = 0; i <= data.length - 4; i++) {
-    if (data[i] === crlfcrlf[0] && data[i + 1] === crlfcrlf[1] &&
-        data[i + 2] === crlfcrlf[2] && data[i + 3] === crlfcrlf[3]) {
-      return i + 4; // body starts after \r\n\r\n
-    }
-  }
-  return -1; // no boundary found
-});
+const httpBodyOffset = computed((): number => findHttpBodyOffset(rawData.value));
 
 const getStructureClass = (globalOffset: number): string => {
   if (!showStructureHighlight.value || httpBodyOffset.value < 0) return "";
@@ -488,51 +510,72 @@ const onDocumentClick = (e: MouseEvent) => {
   }
 };
 
+// Auto-suggest a filename in priority order: Content-Disposition,
+// URL path basename, detected file signature, then a stable default.
+const suggestExportFilename = (): string => {
+  const fallback = "export.bin";
+
+  if (parsedHttp.value?.headers) {
+    const disposition =
+      parsedHttp.value.headers["Content-Disposition"] ||
+      parsedHttp.value.headers["content-disposition"];
+    if (disposition) {
+      const parsed = parseContentDispositionFilename(disposition);
+      if (parsed) return parsed;
+    }
+  }
+
+  const path: string = props.request?.path || "";
+  if (path) {
+    const lastSegment = path.split("/").filter(Boolean).pop();
+    if (lastSegment) {
+      // Drop query/fragment before sanitizing.
+      const candidate = lastSegment.split(/[?#]/)[0] ?? "";
+      if (candidate.includes(".")) {
+        const sanitized = sanitizeFilename(candidate, "");
+        if (sanitized) return sanitized;
+      }
+    }
+  }
+
+  if (detectedSignature.value) {
+    const extMap: Record<string, string> = {
+      PNG: "png", JPEG: "jpg", GIF87a: "gif", GIF89a: "gif",
+      WebP: "webp", BMP: "bmp", PDF: "pdf", ZIP: "zip", GZIP: "gz",
+    };
+    const ext = extMap[detectedSignature.value];
+    if (ext) return `export.${ext}`;
+  }
+
+  return fallback;
+};
+
 // Export raw binary data as file download
 const exportBinary = () => {
   const bytes = hasSelection.value ? selectedBytes.value : rawData.value;
   if (bytes.length === 0) return;
 
-  // Auto-suggest filename
-  let filename = "export.bin";
-  const path = props.request?.path || "";
-  if (path) {
-    const pathParts = path.split("/").filter(Boolean);
-    const lastPart = pathParts[pathParts.length - 1];
-    if (lastPart && lastPart.includes(".")) {
-      filename = lastPart.split("?")[0] || filename;
-    }
-  }
-  // Check Content-Disposition from parsed headers
-  if (parsedHttp.value?.headers) {
-    const disposition = parsedHttp.value.headers["Content-Disposition"] || parsedHttp.value.headers["content-disposition"];
-    if (disposition) {
-      const match = disposition.match(/filename[*]?=["']?([^"';\n]+)/i);
-      if (match?.[1]) {
-        filename = match[1];
-      }
-    }
-  }
-
-  // Check detected signature for extension
-  if (filename === "export.bin" && detectedSignature.value) {
-    const extMap: Record<string, string> = {
-      PNG: "png", JPEG: "jpg", "GIF87a": "gif", "GIF89a": "gif",
-      WebP: "webp", BMP: "bmp", PDF: "pdf", ZIP: "zip", GZIP: "gz",
-    };
-    const ext = extMap[detectedSignature.value];
-    if (ext) filename = `export.${ext}`;
-  }
-
-  const blob = new Blob([bytes], { type: "application/octet-stream" });
+  const filename = suggestExportFilename();
+  // Copy into a fresh ArrayBuffer so the Blob doesn't retain a view into
+  // the live rawData buffer (which could be replaced underneath us).
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  const blob = new Blob([buffer], { type: "application/octet-stream" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;
+  a.rel = "noopener";
+  a.style.display = "none";
   document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  try {
+    a.click();
+  } finally {
+    a.remove();
+    // Defer revoke past the synchronous click so the browser can start the
+    // download. 1s is conservative; the blob is otherwise tiny in memory.
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
 };
 
 // Edit mode removed, using per-line editing
@@ -633,15 +676,9 @@ watch(
         rawData.value = new Uint8Array();
         return;
       }
-
-      const rawStr =
-        maxSizeBytes.value > 0 && newRaw.length > maxSizeBytes.value
-          ? newRaw.substring(0, maxSizeBytes.value)
-          : newRaw;
-
-      // Assuming raw is UTF-8 encoded string, convert to Uint8Array
-      const encoder = new TextEncoder();
-      rawData.value = encoder.encode(rawStr);
+      // Truncate by byte length (after UTF-8 encoding) so multi-byte chars
+      // never blow past the cap or split surrogate pairs.
+      rawData.value = encodeUtf8WithLimit(newRaw, maxSizeBytes.value);
     } catch (error) {
       console.error(
         "[Hex View Mode] Error converting raw to Uint8Array:",
@@ -656,24 +693,9 @@ watch(
 // Detect file signature in the body of the HTTP data
 const detectedSignature = computed(() => {
   if (rawData.value.length === 0) return null;
-
-  // Try to find body start (after \r\n\r\n)
-  const crlfcrlf = [0x0d, 0x0a, 0x0d, 0x0a];
-  let bodyStart = -1;
-  for (let i = 0; i <= rawData.value.length - 4; i++) {
-    if (
-      rawData.value[i] === crlfcrlf[0] &&
-      rawData.value[i + 1] === crlfcrlf[1] &&
-      rawData.value[i + 2] === crlfcrlf[2] &&
-      rawData.value[i + 3] === crlfcrlf[3]
-    ) {
-      bodyStart = i + 4;
-      break;
-    }
-  }
-
-  // Check body bytes if found, otherwise check from start
-  const checkData = bodyStart > 0 ? rawData.value.slice(bodyStart) : rawData.value;
+  const bodyStart = httpBodyOffset.value;
+  const checkData =
+    bodyStart > 0 ? rawData.value.subarray(bodyStart) : rawData.value;
   return detectFileSignature(checkData);
 });
 
@@ -746,12 +768,12 @@ const updateLine = (line: {
   rawData.value = new Uint8Array(newBytes);
 };
 
-// Check if data is truncated (compare encoded byte length)
+// Compare the displayed byte length against what `raw` would encode to.
+// Using `raw` (normalized) keeps this aligned with the bytes actually shown.
 const isTruncated = computed(() => {
-  const rawStr = props?.request?.raw || props?.response?.raw;
-  if (!rawStr || maxSizeBytes.value === 0) return false;
+  if (maxSizeBytes.value <= 0 || !raw.value) return false;
   const encoder = new TextEncoder();
-  return encoder.encode(rawStr).length > maxSizeBytes.value;
+  return encoder.encode(raw.value).length > maxSizeBytes.value;
 });
 
 // Calculate diff between original and current hex values
@@ -829,7 +851,7 @@ const saveChanges = async () => {
 </script>
 
 <template>
-  <div class="h-full flex flex-col bg-surface-800">
+  <div ref="rootRef" class="h-full flex flex-col bg-surface-800">
     <div class="h-full flex flex-col">
       <!-- Clean Action Toolbar -->
       <div
