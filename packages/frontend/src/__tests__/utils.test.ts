@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 
-import { asciiToHex, ensureCRLF, hexToAscii, parseHttpRaw, detectFileSignature, formatBytes } from "../utils";
+import {
+  asciiToHex,
+  ensureCRLF,
+  hexToAscii,
+  parseHttpRaw,
+  detectFileSignature,
+  formatBytes,
+  findHttpBodyOffset,
+  encodeUtf8WithLimit,
+  sanitizeFilename,
+  parseContentDispositionFilename,
+} from "../utils";
 
 describe("utils", () => {
   describe("hexToAscii", () => {
@@ -432,6 +443,138 @@ describe("utils", () => {
       const lines = result.split("\n");
       expect(lines[0]?.startsWith("00000000")).toBe(true);
       expect(lines[1]?.startsWith("00000010")).toBe(true);
+    });
+  });
+
+  describe("findHttpBodyOffset", () => {
+    it("returns -1 when no CRLFCRLF boundary is present", () => {
+      const data = new TextEncoder().encode("GET / HTTP/1.1\r\nHost: x\r\n");
+      expect(findHttpBodyOffset(data)).toBe(-1);
+    });
+
+    it("returns the byte offset just past the boundary", () => {
+      const headers = "GET / HTTP/1.1\r\nHost: x\r\n\r\n";
+      const raw = headers + "body";
+      const data = new TextEncoder().encode(raw);
+      expect(findHttpBodyOffset(data)).toBe(headers.length);
+    });
+
+    it("returns -1 for buffers shorter than the marker", () => {
+      expect(findHttpBodyOffset(new Uint8Array([0x0d, 0x0a]))).toBe(-1);
+    });
+
+    it("finds only the first boundary when multiple are present", () => {
+      const raw = "A\r\n\r\nB\r\n\r\n";
+      const data = new TextEncoder().encode(raw);
+      expect(findHttpBodyOffset(data)).toBe(5); // "A\r\n\r\n" -> 5
+    });
+  });
+
+  describe("encodeUtf8WithLimit", () => {
+    it("returns the full encoding when under the limit", () => {
+      const result = encodeUtf8WithLimit("hello", 100);
+      expect(Array.from(result)).toEqual([0x68, 0x65, 0x6c, 0x6c, 0x6f]);
+    });
+
+    it("disables truncation when maxBytes <= 0", () => {
+      const result = encodeUtf8WithLimit("hello", 0);
+      expect(result.length).toBe(5);
+    });
+
+    it("truncates ASCII to exactly maxBytes", () => {
+      const result = encodeUtf8WithLimit("abcdef", 3);
+      expect(Array.from(result)).toEqual([0x61, 0x62, 0x63]);
+    });
+
+    it("never splits a multi-byte UTF-8 sequence", () => {
+      // "한" is 3 bytes in UTF-8: ed 95 9c
+      const result = encodeUtf8WithLimit("한가", 4);
+      // We must back off the partial 3-byte sequence; only "한" fits in 4 bytes.
+      expect(result.length).toBe(3);
+      const decoded = new TextDecoder("utf-8", { fatal: true }).decode(result);
+      expect(decoded).toBe("한");
+    });
+
+    it("returns an empty result when the limit falls inside the first multi-byte char", () => {
+      const result = encodeUtf8WithLimit("한", 2);
+      expect(result.length).toBe(0);
+    });
+
+    it("handles supplementary plane chars (4-byte sequences)", () => {
+      // "😀" is 4 bytes: f0 9f 98 80
+      const result = encodeUtf8WithLimit("😀x", 3);
+      expect(result.length).toBe(0);
+      const result2 = encodeUtf8WithLimit("😀x", 4);
+      expect(result2.length).toBe(4);
+    });
+  });
+
+  describe("sanitizeFilename", () => {
+    it("strips control characters", () => {
+      expect(sanitizeFilename("foo\r\nbar\x00.txt")).toBe("foobar.txt");
+    });
+
+    it("replaces path separators", () => {
+      expect(sanitizeFilename("a/b\\c.txt")).toBe("a_b_c.txt");
+    });
+
+    it("falls back when input is empty after sanitization", () => {
+      expect(sanitizeFilename("\x00\x01", "fallback.bin")).toBe("fallback.bin");
+    });
+
+    it("strips leading dots to avoid hidden / traversal names", () => {
+      expect(sanitizeFilename("...file.txt")).toBe("file.txt");
+      expect(sanitizeFilename("..", "f.bin")).toBe("f.bin");
+    });
+
+    it("caps overly long names", () => {
+      const long = "a".repeat(500) + ".bin";
+      expect(sanitizeFilename(long).length).toBe(255);
+    });
+  });
+
+  describe("parseContentDispositionFilename", () => {
+    it("parses a plain filename= value", () => {
+      expect(parseContentDispositionFilename("attachment; filename=report.csv"))
+        .toBe("report.csv");
+    });
+
+    it("parses a quoted filename= value", () => {
+      expect(
+        parseContentDispositionFilename('attachment; filename="report v2.csv"'),
+      ).toBe("report v2.csv");
+    });
+
+    it("prefers RFC 5987 filename*= over filename=", () => {
+      const header =
+        "attachment; filename=fallback.bin; filename*=UTF-8''r%C3%A9sum%C3%A9.pdf";
+      expect(parseContentDispositionFilename(header)).toBe("résumé.pdf");
+    });
+
+    it("returns null when no filename token is present", () => {
+      expect(parseContentDispositionFilename("attachment")).toBeNull();
+    });
+
+    it("strips CRLF injection from filename values", () => {
+      const header = 'attachment; filename="foo\r\nSet-Cookie: x.txt"';
+      const result = parseContentDispositionFilename(header);
+      expect(result).not.toBeNull();
+      expect(result).not.toContain("\r");
+      expect(result).not.toContain("\n");
+    });
+
+    it("strips path separators from filename values", () => {
+      const header = 'attachment; filename="../../etc/passwd"';
+      const result = parseContentDispositionFilename(header);
+      expect(result).not.toContain("/");
+      expect(result).not.toContain("\\");
+    });
+
+    it("falls back to legacy filename= when filename*= is malformed", () => {
+      const header =
+        "attachment; filename=legacy.txt; filename*=UTF-8''%E0%A4%A";
+      // The percent sequence is invalid; decoder throws, and we fall back.
+      expect(parseContentDispositionFilename(header)).toBe("legacy.txt");
     });
   });
 });

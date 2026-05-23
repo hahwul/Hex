@@ -199,3 +199,108 @@ export const ensureCRLF = (rawData: string): string => {
   // Only convert standalone \n to \r\n (don't double-convert \r\n)
   return rawData.replace(/\r?\n/g, "\r\n");
 };
+
+/**
+ * Find the start of the HTTP body (byte offset just past the first \r\n\r\n).
+ * @param data - Uint8Array containing an HTTP message
+ * @returns Byte offset of the body, or -1 if no boundary is found
+ */
+export const findHttpBodyOffset = (data: Uint8Array): number => {
+  // Bail early if there's not enough room for the marker.
+  if (data.length < 4) return -1;
+  for (let i = 0; i <= data.length - 4; i++) {
+    if (
+      data[i] === 0x0d &&
+      data[i + 1] === 0x0a &&
+      data[i + 2] === 0x0d &&
+      data[i + 3] === 0x0a
+    ) {
+      return i + 4;
+    }
+  }
+  return -1;
+};
+
+/**
+ * Truncate a string to a maximum number of UTF-8 bytes without splitting
+ * multi-byte sequences or surrogate pairs. Returns the encoded bytes.
+ *
+ * Why: callers want a byte-bounded view of the data, but `String.prototype
+ * .substring` slices by UTF-16 code units, which lets multi-byte UTF-8 chars
+ * blow past the cap and risks splitting surrogate pairs.
+ *
+ * @param input - The source string
+ * @param maxBytes - Maximum byte length; <= 0 disables truncation
+ */
+export const encodeUtf8WithLimit = (
+  input: string,
+  maxBytes: number,
+): Uint8Array => {
+  const encoder = new TextEncoder();
+  if (maxBytes <= 0) return encoder.encode(input);
+
+  // Fast path: assume ASCII and check after encoding once.
+  const encoded = encoder.encode(input);
+  if (encoded.length <= maxBytes) return encoded;
+
+  // Walk back to the last UTF-8 sequence boundary.
+  let end = maxBytes;
+  while (end > 0 && (encoded[end]! & 0xc0) === 0x80) {
+    end--;
+  }
+  return encoded.subarray(0, end);
+};
+
+/**
+ * Sanitize a filename suggested by Content-Disposition or a URL path.
+ * Strips path separators, control characters, and anything else that could
+ * be used to escape the intended download location.
+ */
+export const sanitizeFilename = (input: string, fallback = "export.bin"): string => {
+  // Drop CR/LF and other control chars, then strip path separators.
+  let cleaned = input
+    .replace(/[\x00-\x1f\x7f]/g, "")
+    .replace(/[\\/]/g, "_")
+    .trim();
+  // Disallow leading dots so we don't produce hidden files / parent references.
+  cleaned = cleaned.replace(/^\.+/, "");
+  if (!cleaned || cleaned === "." || cleaned === "..") return fallback;
+  // Reasonable cap to avoid pathological values.
+  return cleaned.slice(0, 255);
+};
+
+/**
+ * Extract a download filename from a Content-Disposition header value.
+ * Prefers RFC 5987 `filename*=UTF-8''...` when present, falls back to the
+ * legacy `filename=` form, and sanitizes the result.
+ */
+export const parseContentDispositionFilename = (
+  header: string,
+): string | null => {
+  // RFC 5987: filename*=UTF-8''<percent-encoded>
+  const extMatch = header.match(/filename\*\s*=\s*([^;]+)/i);
+  if (extMatch?.[1]) {
+    const value = extMatch[1].trim();
+    const parts = value.split("''");
+    const encoded = parts.length === 2 ? parts[1] : value;
+    if (encoded) {
+      try {
+        const decoded = decodeURIComponent(encoded);
+        const sanitized = sanitizeFilename(decoded, "");
+        if (sanitized) return sanitized;
+      } catch {
+        // Fall through to filename= handling on malformed percent-encoding.
+      }
+    }
+  }
+
+  // Legacy: filename="value" or filename=value
+  const legacy = header.match(/filename\s*=\s*("([^"]*)"|'([^']*)'|([^;]+))/i);
+  if (legacy) {
+    const value = (legacy[2] ?? legacy[3] ?? legacy[4] ?? "").trim();
+    const sanitized = sanitizeFilename(value, "");
+    if (sanitized) return sanitized;
+  }
+
+  return null;
+};

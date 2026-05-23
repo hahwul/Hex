@@ -3,15 +3,13 @@ import HexViewMode from "./views/HexViewMode.vue";
 import "./styles/index.css";
 
 export const init = (sdk: FrontendSDK) => {
-  const condition = (data: any): boolean => {
-    return !!data?.raw; // Show Hex ViewMode only when raw data exists
-  };
+  // Only show the Hex view mode when there's actually raw bytes to render.
+  const condition = (data: { raw?: string } | null | undefined): boolean =>
+    !!data?.raw;
 
   const viewMode = {
     label: "Hex",
-    view: {
-      component: HexViewMode,
-    },
+    view: { component: HexViewMode },
     condition,
   };
 
