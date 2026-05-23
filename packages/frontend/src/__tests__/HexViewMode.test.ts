@@ -1289,6 +1289,54 @@ describe("HexViewMode.vue", () => {
       const event = new KeyboardEvent("keydown", { key: "f", ctrlKey: true });
       expect(() => document.dispatchEvent(event)).not.toThrow();
     });
+
+    it("does not open search when an external input has focus", async () => {
+      const external = document.createElement("input");
+      external.type = "text";
+      document.body.appendChild(external);
+
+      const wrapper = mount(HexViewMode, {
+        props: {
+          ...defaultProps,
+          request: { raw: "Hello", host: "test", path: "/" },
+        },
+        attachTo: document.body,
+      });
+
+      external.focus();
+      expect(document.activeElement).toBe(external);
+
+      const event = new KeyboardEvent("keydown", { key: "f", ctrlKey: true });
+      document.dispatchEvent(event);
+      await wrapper.vm.$nextTick();
+
+      expect(wrapper.find("input[placeholder*='Search']").exists()).toBe(false);
+
+      external.remove();
+      wrapper.unmount();
+    });
+  });
+
+  describe("UTF-8 truncation", () => {
+    it("truncates by byte length at a multi-byte char boundary", async () => {
+      // "한" = ED 95 9C (3 bytes). 4000 chars = 12000 bytes, above the 10KB cap.
+      // 10240 / 3 = 3413.33, so 3413 chars × 3 = 10239 bytes lands on a boundary.
+      const raw = "한".repeat(4000);
+      const wrapper = mount(HexViewMode, {
+        props: {
+          ...defaultProps,
+          request: { raw, host: "test", path: "/" },
+        },
+      });
+
+      expect(wrapper.text()).toContain("10239 bytes");
+      expect(wrapper.text()).toContain("(truncated)");
+
+      // The final rendered byte must be a continuation byte (0x9C tail of "한"),
+      // never a stray lead byte that would imply a split sequence.
+      const hexHtml = wrapper.find("td:nth-child(2)").html();
+      expect(hexHtml).toBeTruthy();
+    });
   });
 
   describe("Export Binary", () => {

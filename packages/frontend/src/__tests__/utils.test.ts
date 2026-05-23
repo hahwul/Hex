@@ -527,9 +527,19 @@ describe("utils", () => {
       expect(sanitizeFilename("..", "f.bin")).toBe("f.bin");
     });
 
-    it("caps overly long names", () => {
+    it("caps overly long ASCII names at 255 bytes", () => {
       const long = "a".repeat(500) + ".bin";
       expect(sanitizeFilename(long).length).toBe(255);
+    });
+
+    it("caps multi-byte names by byte length, not char count", () => {
+      // "한" is 3 bytes in UTF-8; 100 chars = 300 bytes — must clip below 256.
+      const long = "한".repeat(100);
+      const result = sanitizeFilename(long);
+      const encoded = new TextEncoder().encode(result);
+      expect(encoded.length).toBeLessThanOrEqual(255);
+      // The clip should land on a char boundary, not produce U+FFFD.
+      expect(result).not.toContain("�");
     });
   });
 
@@ -549,6 +559,18 @@ describe("utils", () => {
       const header =
         "attachment; filename=fallback.bin; filename*=UTF-8''r%C3%A9sum%C3%A9.pdf";
       expect(parseContentDispositionFilename(header)).toBe("résumé.pdf");
+    });
+
+    it("handles RFC 5987 filename*= with a language tag", () => {
+      const header = "attachment; filename*=UTF-8'en'r%C3%A9sum%C3%A9.pdf";
+      expect(parseContentDispositionFilename(header)).toBe("résumé.pdf");
+    });
+
+    it("falls through to legacy when filename*= is missing quotes", () => {
+      // Missing the charset''value structure — must not be silently decoded.
+      const header =
+        "attachment; filename=legacy.bin; filename*=raw-no-quotes-value";
+      expect(parseContentDispositionFilename(header)).toBe("legacy.bin");
     });
 
     it("returns null when no filename token is present", () => {

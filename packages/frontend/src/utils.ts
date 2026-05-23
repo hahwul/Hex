@@ -265,8 +265,10 @@ export const sanitizeFilename = (input: string, fallback = "export.bin"): string
   // Disallow leading dots so we don't produce hidden files / parent references.
   cleaned = cleaned.replace(/^\.+/, "");
   if (!cleaned || cleaned === "." || cleaned === "..") return fallback;
-  // Reasonable cap to avoid pathological values.
-  return cleaned.slice(0, 255);
+  // Cap by UTF-8 byte length — many filesystems (e.g. ext4) limit by bytes,
+  // not characters, so a multi-byte name could otherwise exceed 255 bytes.
+  const limited = encodeUtf8WithLimit(cleaned, 255);
+  return new TextDecoder("utf-8").decode(limited);
 };
 
 /**
@@ -277,12 +279,13 @@ export const sanitizeFilename = (input: string, fallback = "export.bin"): string
 export const parseContentDispositionFilename = (
   header: string,
 ): string | null => {
-  // RFC 5987: filename*=UTF-8''<percent-encoded>
+  // RFC 5987: filename*=<charset>'<lang>'<percent-encoded>
+  // Language tag is optional but the single-quote separators are not.
   const extMatch = header.match(/filename\*\s*=\s*([^;]+)/i);
   if (extMatch?.[1]) {
     const value = extMatch[1].trim();
-    const parts = value.split("''");
-    const encoded = parts.length === 2 ? parts[1] : value;
+    const parsed = value.match(/^([^']*)'([^']*)'(.+)$/);
+    const encoded = parsed?.[3];
     if (encoded) {
       try {
         const decoded = decodeURIComponent(encoded);
