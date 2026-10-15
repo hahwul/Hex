@@ -9,6 +9,7 @@ import {
   formatBytes,
   findHttpBodyOffset,
   encodeUtf8WithLimit,
+  utf8CutIndex,
   sanitizeFilename,
   parseContentDispositionFilename,
 } from "../utils";
@@ -58,6 +59,10 @@ describe("utils", () => {
       const hex = "20"; // Space
       expect(hexToAscii(hex)).toBe(" ");
     });
+
+    it("should accept newline-separated hex", () => {
+      expect(hexToAscii("48 65\n6c\t6c")).toBe("Hell");
+    });
   });
 
   describe("asciiToHex", () => {
@@ -100,6 +105,15 @@ describe("utils", () => {
       const ascii = "A..";
       const originalHex = "41"; // Only one byte
       expect(asciiToHex(ascii, originalHex)).toBe("41 2e 2e");
+    });
+
+    it("should map dot placeholders by code point after an emoji", () => {
+      expect(asciiToHex("😀.B.", "41 00 42 01")).toBe("f0 9f 98 80 00 42 01");
+    });
+
+    it("should UTF-8 encode non-ASCII characters", () => {
+      expect(asciiToHex("é")).toBe("c3 a9");
+      expect(asciiToHex("😀")).toBe("f0 9f 98 80");
     });
 
     it("should handle numbers", () => {
@@ -597,6 +611,18 @@ describe("utils", () => {
         "attachment; filename=legacy.txt; filename*=UTF-8''%E0%A4%A";
       // The percent sequence is invalid; decoder throws, and we fall back.
       expect(parseContentDispositionFilename(header)).toBe("legacy.txt");
+    });
+  });
+
+  describe("utf8CutIndex", () => {
+    it("returns the full length when there is no limit", () => {
+      const data = new Uint8Array(5);
+      expect(utf8CutIndex(data, 0)).toBe(5);
+      expect(utf8CutIndex(data, NaN)).toBe(5);
+    });
+
+    it("never backs off more than 3 bytes on invalid UTF-8", () => {
+      expect(utf8CutIndex(new Uint8Array(10).fill(0x80), 6)).toBe(3);
     });
   });
 });

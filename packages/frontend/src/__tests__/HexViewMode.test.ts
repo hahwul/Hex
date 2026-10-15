@@ -215,6 +215,7 @@ describe("HexViewMode.vue", () => {
 
       expect(wrapper.find(".fixed.inset-0").exists()).toBe(true);
       expect(wrapper.text()).toContain("Edit Hex Values");
+      wrapper.unmount();
     });
 
     it("updates ASCII preview when Hex is edited in modal", async () => {
@@ -430,6 +431,142 @@ describe("HexViewMode.vue", () => {
         // Verify error toast
         expect(mockSdk.window.showToast).toHaveBeenCalledWith(expect.stringContaining("Failed to update request"), { variant: "error" });
     });
+
+    const editorMock = (raw: string) => {
+        const dispatch = vi.fn();
+        mockSdk.window.getActiveEditor.mockReturnValue({
+            getEditorView: () => ({
+                state: { doc: { toString: () => raw, length: raw.length } },
+                dispatch,
+            }),
+        });
+        return dispatch;
+    };
+
+    const editFirstLine = async (wrapper: ReturnType<typeof mount>, hex: string) => {
+        await wrapper.find("td:nth-child(2) span").trigger("dblclick");
+        await wrapper.find("textarea[placeholder*='Enter hex']").setValue(hex);
+        await wrapper.findAll("button").find(b => b.text() === "OK")?.trigger("click");
+    };
+
+    it("keeps bytes beyond the size limit when saving truncated data", async () => {
+        window.location.hash = "#/replay/123";
+        const raw = "a".repeat(10240) + "TAIL";
+        const dispatch = editorMock(raw);
+        const wrapper = mount(HexViewMode, {
+            props: { ...defaultProps, request: { raw, host: "test", path: "/" } },
+        });
+        expect(wrapper.text()).toContain("(truncated)");
+
+        await editFirstLine(wrapper, "42 " + "61 ".repeat(15).trim());
+        await wrapper.find("button[title='Save Changes']").trigger("click");
+
+        const insert: string = dispatch.mock.calls[0]?.[0].changes.insert;
+        expect(insert.length).toBe(raw.length);
+        expect(insert.startsWith("Ba")).toBe(true);
+        expect(insert.endsWith("TAIL")).toBe(true);
+    });
+
+    it("shows an error instead of success when there is no active editor", async () => {
+        window.location.hash = "#/replay/123";
+        mockSdk.window.getActiveEditor.mockReturnValue(undefined);
+        const wrapper = mount(HexViewMode, {
+            props: { ...defaultProps, request: { raw: "Test", host: "test", path: "/" } },
+        });
+        await wrapper.find("button[title='Save Changes']").trigger("click");
+
+        expect(mockSdk.window.showToast).toHaveBeenCalledWith(expect.stringContaining("No active editor"), { variant: "error" });
+        expect(mockSdk.window.showToast).not.toHaveBeenCalledWith("Request updated successfully", expect.anything());
+    });
+
+    it("refuses to save bytes that are not valid UTF-8", async () => {
+        window.location.hash = "#/replay/123";
+        const dispatch = editorMock("Test");
+        const wrapper = mount(HexViewMode, {
+            props: { ...defaultProps, request: { raw: "Test", host: "test", path: "/" } },
+        });
+        await editFirstLine(wrapper, "ff 65 73 74");
+        await wrapper.find("button[title='Save Changes']").trigger("click");
+
+        expect(dispatch).not.toHaveBeenCalled();
+        expect(mockSdk.window.showToast).toHaveBeenCalledWith(expect.stringContaining("Failed to update request"), { variant: "error" });
+    });
+
+    it("rejects malformed hex in the edit modal and keeps it open", async () => {
+        window.location.hash = "#/replay/123";
+        editorMock("Test");
+        const wrapper = mount(HexViewMode, {
+            props: { ...defaultProps, request: { raw: "Test", host: "test", path: "/" } },
+        });
+        await editFirstLine(wrapper, "4 65 zz");
+
+        expect(wrapper.find(".fixed.inset-0").exists()).toBe(true);
+        expect(mockSdk.window.showToast).toHaveBeenCalledWith(expect.stringContaining("Invalid hex"), { variant: "error" });
+        expect(wrapper.text()).toContain("Test");
+    });
+
+    it("keeps unsaved edits when the size limit changes", async () => {
+        window.location.hash = "#/replay/123";
+        const dispatch = editorMock("Test");
+        const wrapper = mount(HexViewMode, {
+            props: { ...defaultProps, request: { raw: "Test", host: "test", path: "/" } },
+        });
+        await editFirstLine(wrapper, "42 65 73 74");
+        await wrapper.find("select[title='Max data size']").setValue("51200");
+        expect(wrapper.find("td:nth-child(3)").text()).toBe("Best");
+
+        await wrapper.find("button[title='Save Changes']").trigger("click");
+        expect(dispatch.mock.calls[0]?.[0].changes.insert).toBe("Best");
+    });
+
+    it("refuses to save a lone LF the editor would turn into CRLF", async () => {
+        window.location.hash = "#/replay/123";
+        const dispatch = editorMock("Test");
+        const wrapper = mount(HexViewMode, {
+            props: { ...defaultProps, request: { raw: "Test", host: "test", path: "/" } },
+        });
+        await editFirstLine(wrapper, "54 0a 73 74");
+        await wrapper.find("button[title='Save Changes']").trigger("click");
+
+        expect(dispatch).not.toHaveBeenCalled();
+        expect(mockSdk.window.showToast).toHaveBeenCalledWith(expect.stringContaining("lone CR/LF"), { variant: "error" });
+    });
+
+    it("keeps a leading UTF-8 BOM on save", async () => {
+        window.location.hash = "#/replay/123";
+        const dispatch = editorMock("Test");
+        const wrapper = mount(HexViewMode, {
+            props: { ...defaultProps, request: { raw: "Test", host: "test", path: "/" } },
+        });
+        await editFirstLine(wrapper, "ef bb bf 54 65 73 74");
+        await wrapper.find("button[title='Save Changes']").trigger("click");
+
+        expect(dispatch.mock.calls[0]?.[0].changes.insert).toBe("\uFEFFTest");
+    });
+
+    it("accepts unspaced hex in the edit modal", async () => {
+        window.location.hash = "#/replay/123";
+        editorMock("Test");
+        const wrapper = mount(HexViewMode, {
+            props: { ...defaultProps, request: { raw: "Test", host: "test", path: "/" } },
+        });
+        await editFirstLine(wrapper, "42657374");
+
+        expect(wrapper.find(".fixed.inset-0").exists()).toBe(false);
+        expect(wrapper.find("td:nth-child(3)").text()).toBe("Best");
+    });
+
+    it("accepts newline-separated hex in the edit modal", async () => {
+        window.location.hash = "#/replay/123";
+        editorMock("Test");
+        const wrapper = mount(HexViewMode, {
+            props: { ...defaultProps, request: { raw: "Test", host: "test", path: "/" } },
+        });
+        await editFirstLine(wrapper, "42 65\n73 74");
+
+        expect(wrapper.find(".fixed.inset-0").exists()).toBe(false);
+        expect(wrapper.find("td:nth-child(3)").text()).toBe("Best");
+    });
   });
 
   describe("Byte Pattern Search", () => {
@@ -587,6 +724,44 @@ describe("HexViewMode.vue", () => {
 
       // Should not have any highlighted spans
       expect(wrapper.findAll("span.bg-orange-500\\/50").length).toBe(0);
+    });
+
+    it("clears non-current match highlights when search bar is closed", async () => {
+      const wrapper = mount(HexViewMode, {
+        props: { ...defaultProps, request: { raw: "AAA", host: "test", path: "/" } },
+      });
+      await wrapper.find("button[title*='Search']").trigger("click");
+      const searchInput = wrapper.find("input[placeholder*='Search hex']");
+      await searchInput.setValue("41");
+      await searchInput.trigger("input");
+      expect(wrapper.findAll("span.bg-yellow-500\\/30").length).toBeGreaterThan(0);
+
+      await wrapper.find("button[title='Close (Esc)']").trigger("click");
+      expect(wrapper.findAll("span.bg-yellow-500\\/30").length).toBe(0);
+    });
+
+    it("keeps leading/trailing spaces in ASCII queries", async () => {
+      const wrapper = mount(HexViewMode, {
+        props: { ...defaultProps, request: { raw: "ab b", host: "test", path: "/" } },
+      });
+      await wrapper.find("button[title*='Search']").trigger("click");
+      await wrapper.findAll("button").find(b => b.text() === "ASCII")?.trigger("click");
+      const searchInput = wrapper.find("input[placeholder*='Search ASCII']");
+      // Trimmed, " b" would become "b" and match twice.
+      await searchInput.setValue(" b");
+      await searchInput.trigger("input");
+      expect(wrapper.text()).toContain("1/1");
+    });
+
+    it("does not show 'No match' for a whitespace-only hex query", async () => {
+      const wrapper = mount(HexViewMode, {
+        props: { ...defaultProps, request: { raw: "Hello", host: "test", path: "/" } },
+      });
+      await wrapper.find("button[title*='Search']").trigger("click");
+      const searchInput = wrapper.find("input[placeholder*='Search hex']");
+      await searchInput.setValue("  ");
+      await searchInput.trigger("input");
+      expect(wrapper.text()).not.toContain("No match");
     });
 
     it("handles invalid hex input gracefully", async () => {
@@ -1130,6 +1305,38 @@ describe("HexViewMode.vue", () => {
       expect(wrapper.text()).not.toContain("Invalid offset");
       expect(wrapper.findAll("span.bg-cyan-500\\/50").length).toBe(0);
     });
+
+    it("does not show an error while typing before Go is pressed", async () => {
+      const wrapper = mount(HexViewMode, {
+        props: { ...defaultProps, request: { raw: "Hello", host: "test", path: "/" } },
+      });
+      await wrapper.find("button[title*='Go to offset']").trigger("click");
+      const input = wrapper.find("input[placeholder*='Hex (0x']");
+      await input.setValue("2");
+      expect(wrapper.text()).not.toContain("Invalid offset");
+    });
+
+    it("reads zero-padded offsets as hex, like the offset column", async () => {
+      const wrapper = mount(HexViewMode, {
+        props: { ...defaultProps, request: { raw: "0123456789ABCDEFGHIJKLMNOPQRSTUV", host: "test", path: "/" } },
+      });
+      await wrapper.find("button[title*='Go to offset']").trigger("click");
+      await wrapper.find("input[placeholder*='Hex (0x']").setValue("00000010");
+      await wrapper.findAll("button").find((b) => b.text() === "Go")?.trigger("click");
+      // Byte 0x10 = 'G' (47); decimal 10 would be 'A' (41).
+      expect(wrapper.find("td:nth-child(2) span.bg-cyan-500\\/50").text()).toBe("47");
+    });
+
+    it("rejects offsets with trailing garbage", async () => {
+      const wrapper = mount(HexViewMode, {
+        props: { ...defaultProps, request: { raw: "Hello", host: "test", path: "/" } },
+      });
+      await wrapper.find("button[title*='Go to offset']").trigger("click");
+      await wrapper.find("input[placeholder*='Hex (0x']").setValue("2zz");
+      await wrapper.findAll("button").find((b) => b.text() === "Go")?.trigger("click");
+      expect(wrapper.text()).toContain("Invalid offset");
+      expect(wrapper.findAll("span.bg-cyan-500\\/50").length).toBe(0);
+    });
   });
 
   describe("File Signature Detection", () => {
@@ -1215,7 +1422,7 @@ describe("HexViewMode.vue", () => {
 
       // Switch to Unlimited (0) -> no truncation
       const sizeSelect = wrapper.find("select[title='Max data size']");
-      await sizeSelect.setValue(0);
+      await sizeSelect.setValue("0");
 
       expect(wrapper.text()).not.toContain("(truncated)");
     });
@@ -1317,6 +1524,39 @@ describe("HexViewMode.vue", () => {
     });
   });
 
+  describe("Multiple panes", () => {
+    it("routes Ctrl+F only to the pane clicked last", async () => {
+      const mk = () => mount(HexViewMode, {
+        props: { ...defaultProps, request: { raw: "Hello", host: "test", path: "/" } },
+        attachTo: document.body,
+      });
+      const a = mk();
+      const b = mk();
+      (a.find("td:nth-child(2) span span").element as HTMLElement).click();
+
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "f", ctrlKey: true }));
+      await a.vm.$nextTick();
+
+      expect(a.find("input[placeholder*='Search']").exists()).toBe(true);
+      expect(b.find("input[placeholder*='Search']").exists()).toBe(false);
+      a.unmount();
+      b.unmount();
+    });
+  });
+
+  describe("Data source changes", () => {
+    it("clears the selection when the displayed message changes", async () => {
+      const wrapper = mount(HexViewMode, {
+        props: { ...defaultProps, request: { raw: "Hello", host: "test", path: "/" } },
+      });
+      await wrapper.find("td:nth-child(2) span span").trigger("click");
+      expect(wrapper.text()).toContain("Data Inspector");
+
+      await wrapper.setProps({ request: { raw: "World", host: "test", path: "/" } });
+      expect(wrapper.text()).not.toContain("Data Inspector");
+    });
+  });
+
   describe("UTF-8 truncation", () => {
     it("truncates by byte length at a multi-byte char boundary", async () => {
       // "한" = ED 95 9C (3 bytes). 4000 chars = 12000 bytes, above the 10KB cap.
@@ -1403,6 +1643,33 @@ describe("HexViewMode.vue", () => {
 
       expect(anchor?.download).toBe("photo.png");
       createSpy.mockRestore();
+    });
+
+    it("exports bytes beyond the display size limit", async () => {
+      const raw = "a".repeat(20000);
+      const wrapper = mount(HexViewMode, {
+        props: { ...defaultProps, response: { raw } },
+      });
+      expect(wrapper.text()).toContain("(truncated)");
+
+      await wrapper.find("button[title='Export binary data']").trigger("click");
+      const blob = createObjectURLMock.mock.calls[0]?.[0] as Blob;
+      expect(blob.size).toBe(20000);
+    });
+
+    it("matches the Content-Disposition header case-insensitively", async () => {
+      const raw =
+        "HTTP/1.1 200 OK\r\nCONTENT-DISPOSITION: attachment; filename=\"up.png\"\r\n\r\nX";
+      const wrapper = mount(HexViewMode, {
+        props: { ...defaultProps, response: { raw } },
+      });
+      let downloaded = "";
+      const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+        downloaded = this.download;
+      });
+      await wrapper.find("button[title='Export binary data']").trigger("click");
+      expect(downloaded).toBe("up.png");
+      clickSpy.mockRestore();
     });
 
     it("uses Content-Disposition filename when present", async () => {
