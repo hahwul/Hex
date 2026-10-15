@@ -1555,6 +1555,18 @@ describe("HexViewMode.vue", () => {
       createSpy.mockRestore();
     });
 
+    it("exports bytes beyond the display size limit", async () => {
+      const raw = "a".repeat(20000);
+      const wrapper = mount(HexViewMode, {
+        props: { ...defaultProps, response: { raw } },
+      });
+      expect(wrapper.text()).toContain("(truncated)");
+
+      await wrapper.find("button[title='Export binary data']").trigger("click");
+      const blob = createObjectURLMock.mock.calls[0]?.[0] as Blob;
+      expect(blob.size).toBe(20000);
+    });
+
     it("matches the Content-Disposition header case-insensitively", async () => {
       const raw =
         "HTTP/1.1 200 OK\r\nCONTENT-DISPOSITION: attachment; filename=\"up.png\"\r\n\r\nX";

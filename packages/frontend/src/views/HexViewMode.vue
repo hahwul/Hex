@@ -508,8 +508,18 @@ const getStructureClass = (globalOffset: number): string => {
 // Multi-format copy
 const showCopyMenu = ref(false);
 
+// Displayed (possibly edited) bytes plus anything cut off by the size limit.
+const fullBytes = (): Uint8Array => {
+  const bytes = new Uint8Array(
+    rawData.value.length + truncatedTail.value.length,
+  );
+  bytes.set(rawData.value);
+  bytes.set(truncatedTail.value, rawData.value.length);
+  return bytes;
+};
+
 const getCopyBytes = (): Uint8Array => {
-  return hasSelection.value ? selectedBytes.value : rawData.value;
+  return hasSelection.value ? selectedBytes.value : fullBytes();
 };
 
 const copyAs = async (format: CopyFormat) => {
@@ -579,7 +589,7 @@ const suggestExportFilename = (): string => {
 
 // Export raw binary data as file download
 const exportBinary = () => {
-  const bytes = hasSelection.value ? selectedBytes.value : rawData.value;
+  const bytes = getCopyBytes();
   if (bytes.length === 0) return;
 
   const filename = suggestExportFilename();
@@ -853,14 +863,11 @@ const saveChanges = async () => {
   if (!isReplayTab.value) return; // Only in Replay tab
 
   try {
-    const bytes = new Uint8Array(
-      rawData.value.length + truncatedTail.value.length,
-    );
-    bytes.set(rawData.value);
-    bytes.set(truncatedTail.value, rawData.value.length);
     // fatal: the editor holds text, so refuse instead of silently turning
     // invalid bytes into U+FFFD.
-    const newRaw = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    const newRaw = new TextDecoder("utf-8", { fatal: true }).decode(
+      fullBytes(),
+    );
 
     const editorView = props.sdk.window?.getActiveEditor?.()?.getEditorView();
     if (!editorView) throw new Error("No active editor");
