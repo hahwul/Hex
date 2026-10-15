@@ -87,17 +87,20 @@ const shouldHandleShortcut = (): boolean => {
 // Keyboard shortcuts handler
 const onKeydown = (e: KeyboardEvent) => {
   // Ctrl+F: Open search
-  if ((e.ctrlKey || e.metaKey) && e.key === "f") {
+  const key = e.key.toLowerCase();
+  if ((e.ctrlKey || e.metaKey) && key === "f") {
     if (!shouldHandleShortcut()) return;
     e.preventDefault();
-    if (!searchState.showSearch) toggleSearch();
+    if (searchState.showSearch) searchInputRef.value?.focus();
+    else toggleSearch();
     return;
   }
   // Ctrl+G: Open go to offset
-  if ((e.ctrlKey || e.metaKey) && e.key === "g") {
+  if ((e.ctrlKey || e.metaKey) && key === "g") {
     if (!shouldHandleShortcut()) return;
     e.preventDefault();
-    if (!gotoState.showGoto) toggleGoto();
+    if (gotoState.showGoto) gotoInputRef.value?.focus();
+    else toggleGoto();
     return;
   }
 };
@@ -107,16 +110,19 @@ const ROW_HEIGHT = 24; // px per row
 const OVERSCAN = 5; // extra rows to render above/below viewport
 const scrollContainerRef = ref<HTMLElement | null>(null);
 const scrollTop = ref(0);
+const containerHeight = ref(400);
+let resizeObserver: ResizeObserver | undefined;
+const searchInputRef = ref<HTMLInputElement | null>(null);
+const gotoInputRef = ref<HTMLInputElement | null>(null);
 
 const totalRows = computed(() => dumpLines.value.length);
 const totalHeight = computed(() => totalRows.value * ROW_HEIGHT);
 
 const visibleRange = computed(() => {
-  const containerHeight = scrollContainerRef.value?.clientHeight || 400;
   const start = Math.max(0, Math.floor(scrollTop.value / ROW_HEIGHT) - OVERSCAN);
   const end = Math.min(
     totalRows.value,
-    Math.ceil((scrollTop.value + containerHeight) / ROW_HEIGHT) + OVERSCAN,
+    Math.ceil((scrollTop.value + containerHeight.value) / ROW_HEIGHT) + OVERSCAN,
   );
   return { start, end };
 });
@@ -138,6 +144,14 @@ const onScroll = (e: Event) => {
 onMounted(() => {
   document.addEventListener("keydown", onKeydown);
   document.addEventListener("click", onDocumentClick, true);
+  // Re-render enough rows when the pane is resized, not only on scroll.
+  const el = scrollContainerRef.value;
+  if (el && typeof ResizeObserver !== "undefined") {
+    resizeObserver = new ResizeObserver(() => {
+      containerHeight.value = el.clientHeight || 400;
+    });
+    resizeObserver.observe(el);
+  }
 });
 
 // Clean up document-level event listeners on unmount
@@ -146,6 +160,7 @@ onUnmounted(() => {
   document.removeEventListener("mouseup", onMouseUp);
   document.removeEventListener("keydown", onKeydown);
   document.removeEventListener("click", onDocumentClick, true);
+  resizeObserver?.disconnect();
 });
 
 const props = defineProps<{
@@ -187,7 +202,9 @@ const performSearch = () => {
   searchState.currentMatchIndex = -1;
   highlightedOffsets.value = new Set();
 
-  const query = searchState.query.trim();
+  // Spaces are significant in ASCII mode, so only trim hex queries.
+  const query =
+    searchState.mode === "hex" ? searchState.query.trim() : searchState.query;
   if (!query || rawData.value.length === 0) return;
 
   let searchBytes: number[] = [];
@@ -283,16 +300,20 @@ const isCurrentMatch = (globalByteOffset: number): boolean => {
 // Toggle search bar
 const toggleSearch = () => {
   searchState.showSearch = !searchState.showSearch;
-  if (!searchState.showSearch) {
+  if (searchState.showSearch) {
+    nextTick(() => searchInputRef.value?.focus());
+  } else {
     searchState.query = "";
     searchState.matches = [];
     searchState.currentMatchIndex = -1;
+    highlightedOffsets.value = new Set();
   }
 };
 
-// Handle search input
+// Handle search input; jump to the first match so Enter then goes to the 2nd
 const onSearchInput = () => {
   performSearch();
+  scrollToCurrentMatch();
 };
 
 const onSearchKeydown = (e: KeyboardEvent) => {
@@ -313,37 +334,43 @@ const gotoState = reactive({
   showGoto: false,
   input: "",
   highlightedOffset: -1,
+  error: false,
 });
 
 const goToOffset = () => {
   const input = gotoState.input.trim();
   if (!input) return;
 
-  let offset: number;
-  if (input.toLowerCase().startsWith("0x")) {
+  // Digits only => decimal; 0x prefix or any A-F letter => hex.
+  let offset = NaN;
+  if (/^0x[0-9a-f]+$/i.test(input)) {
     offset = parseInt(input, 16);
-  } else if (/[a-fA-F]/.test(input) && /^[0-9a-fA-F]+$/.test(input)) {
-    // Contains hex letters (A-F), treat as hex
-    offset = parseInt(input, 16);
-  } else {
+  } else if (/^\d+$/.test(input)) {
     offset = parseInt(input, 10);
+  } else if (/^[0-9a-f]+$/i.test(input)) {
+    offset = parseInt(input, 16);
   }
 
-  if (isNaN(offset) || offset < 0 || offset >= rawData.value.length) {
+  if (isNaN(offset) || offset >= rawData.value.length) {
     gotoState.highlightedOffset = -1;
+    gotoState.error = true;
     return;
   }
 
   gotoState.highlightedOffset = offset;
+  gotoState.error = false;
   const lineIndex = Math.floor(offset / bytesPerRow.value);
   nextTick(() => scrollToLine(lineIndex));
 };
 
 const toggleGoto = () => {
   gotoState.showGoto = !gotoState.showGoto;
-  if (!gotoState.showGoto) {
+  if (gotoState.showGoto) {
+    nextTick(() => gotoInputRef.value?.focus());
+  } else {
     gotoState.input = "";
     gotoState.highlightedOffset = -1;
+    gotoState.error = false;
   }
 };
 
@@ -516,9 +543,9 @@ const suggestExportFilename = (): string => {
   const fallback = "export.bin";
 
   if (parsedHttp.value?.headers) {
-    const disposition =
-      parsedHttp.value.headers["Content-Disposition"] ||
-      parsedHttp.value.headers["content-disposition"];
+    const disposition = Object.entries(parsedHttp.value.headers).find(
+      ([name]) => name.toLowerCase() === "content-disposition",
+    )?.[1];
     if (disposition) {
       const parsed = parseContentDispositionFilename(disposition);
       if (parsed) return parsed;
@@ -681,6 +708,8 @@ const truncatedTail = ref<Uint8Array>(new Uint8Array());
 watch(
   [raw, maxSizeBytes],
   ([newRaw]) => {
+    clearSelection();
+    gotoState.highlightedOffset = -1;
     try {
       if (!newRaw) {
         rawData.value = new Uint8Array();
@@ -994,6 +1023,7 @@ const saveChanges = async () => {
           </button>
         </div>
         <input
+          ref="searchInputRef"
           v-model="searchState.query"
           :placeholder="
             searchState.mode === 'hex'
@@ -1009,7 +1039,7 @@ const saveChanges = async () => {
             <template v-if="searchState.matches.length > 0">
               {{ searchState.currentMatchIndex + 1 }}/{{ searchState.matches.length }}
             </template>
-            <template v-else-if="searchState.query.trim()">
+            <template v-else-if="searchState.query">
               No match
             </template>
           </span>
@@ -1046,10 +1076,12 @@ const saveChanges = async () => {
       >
         <span class="text-xs text-surface-400">Go to offset:</span>
         <input
+          ref="gotoInputRef"
           v-model="gotoState.input"
           placeholder="Hex (0x0A3F) or decimal (2623)"
           class="flex-1 max-w-xs bg-surface-900 text-surface-300 px-3 py-1 rounded border border-surface-600 text-xs font-mono outline-none focus:border-primary-500"
           @keydown="onGotoKeydown"
+          @input="gotoState.error = false"
         />
         <button
           class="px-3 py-0.5 text-xs rounded bg-primary-600 text-primary-100 hover:bg-primary-500"
@@ -1058,7 +1090,7 @@ const saveChanges = async () => {
           Go
         </button>
         <span
-          v-if="gotoState.input.trim() && gotoState.highlightedOffset < 0"
+          v-if="gotoState.error"
           class="text-xs text-red-400"
         >
           Invalid offset

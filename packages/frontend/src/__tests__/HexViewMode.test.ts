@@ -215,6 +215,7 @@ describe("HexViewMode.vue", () => {
 
       expect(wrapper.find(".fixed.inset-0").exists()).toBe(true);
       expect(wrapper.text()).toContain("Edit Hex Values");
+      wrapper.unmount();
     });
 
     it("updates ASCII preview when Hex is edited in modal", async () => {
@@ -672,6 +673,36 @@ describe("HexViewMode.vue", () => {
 
       // Should not have any highlighted spans
       expect(wrapper.findAll("span.bg-orange-500\\/50").length).toBe(0);
+    });
+
+    it("clears non-current match highlights when search bar is closed", async () => {
+      const wrapper = mount(HexViewMode, {
+        props: { ...defaultProps, request: { raw: "AAA", host: "test", path: "/" } },
+      });
+      await wrapper.find("button[title*='Search']").trigger("click");
+      const searchInput = wrapper.find("input[placeholder*='Search hex']");
+      await searchInput.setValue("41");
+      await searchInput.trigger("input");
+      expect(wrapper.findAll("span.bg-yellow-500\\/30").length).toBeGreaterThan(0);
+
+      await wrapper.find("button[title='Close (Esc)']").trigger("click");
+      expect(wrapper.findAll("span.bg-yellow-500\\/30").length).toBe(0);
+    });
+
+    it("keeps leading/trailing spaces in ASCII queries", async () => {
+      const wrapper = mount(HexViewMode, {
+        props: { ...defaultProps, request: { raw: "a b a", host: "test", path: "/" } },
+      });
+      await wrapper.find("button[title*='Search']").trigger("click");
+      await wrapper.findAll("button").find(b => b.text() === "ASCII")?.trigger("click");
+      const searchInput = wrapper.find("input[placeholder*='Search ASCII']");
+      await searchInput.setValue(" b ");
+      await searchInput.trigger("input");
+      expect(wrapper.text()).toContain("1/1");
+
+      await searchInput.setValue(" ");
+      await searchInput.trigger("input");
+      expect(wrapper.text()).toContain("1/2");
     });
 
     it("handles invalid hex input gracefully", async () => {
@@ -1215,6 +1246,27 @@ describe("HexViewMode.vue", () => {
       expect(wrapper.text()).not.toContain("Invalid offset");
       expect(wrapper.findAll("span.bg-cyan-500\\/50").length).toBe(0);
     });
+
+    it("does not show an error while typing before Go is pressed", async () => {
+      const wrapper = mount(HexViewMode, {
+        props: { ...defaultProps, request: { raw: "Hello", host: "test", path: "/" } },
+      });
+      await wrapper.find("button[title*='Go to offset']").trigger("click");
+      const input = wrapper.find("input[placeholder*='Hex (0x']");
+      await input.setValue("2");
+      expect(wrapper.text()).not.toContain("Invalid offset");
+    });
+
+    it("rejects offsets with trailing garbage", async () => {
+      const wrapper = mount(HexViewMode, {
+        props: { ...defaultProps, request: { raw: "Hello", host: "test", path: "/" } },
+      });
+      await wrapper.find("button[title*='Go to offset']").trigger("click");
+      await wrapper.find("input[placeholder*='Hex (0x']").setValue("2zz");
+      await wrapper.findAll("button").find((b) => b.text() === "Go")?.trigger("click");
+      expect(wrapper.text()).toContain("Invalid offset");
+      expect(wrapper.findAll("span.bg-cyan-500\\/50").length).toBe(0);
+    });
   });
 
   describe("File Signature Detection", () => {
@@ -1402,6 +1454,19 @@ describe("HexViewMode.vue", () => {
     });
   });
 
+  describe("Data source changes", () => {
+    it("clears the selection when the displayed message changes", async () => {
+      const wrapper = mount(HexViewMode, {
+        props: { ...defaultProps, request: { raw: "Hello", host: "test", path: "/" } },
+      });
+      await wrapper.find("td:nth-child(2) span span").trigger("click");
+      expect(wrapper.text()).toContain("Data Inspector");
+
+      await wrapper.setProps({ request: { raw: "World", host: "test", path: "/" } });
+      expect(wrapper.text()).not.toContain("Data Inspector");
+    });
+  });
+
   describe("UTF-8 truncation", () => {
     it("truncates by byte length at a multi-byte char boundary", async () => {
       // "한" = ED 95 9C (3 bytes). 4000 chars = 12000 bytes, above the 10KB cap.
@@ -1488,6 +1553,21 @@ describe("HexViewMode.vue", () => {
 
       expect(anchor?.download).toBe("photo.png");
       createSpy.mockRestore();
+    });
+
+    it("matches the Content-Disposition header case-insensitively", async () => {
+      const raw =
+        "HTTP/1.1 200 OK\r\nCONTENT-DISPOSITION: attachment; filename=\"up.png\"\r\n\r\nX";
+      const wrapper = mount(HexViewMode, {
+        props: { ...defaultProps, response: { raw } },
+      });
+      let downloaded = "";
+      const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+        downloaded = this.download;
+      });
+      await wrapper.find("button[title='Export binary data']").trigger("click");
+      expect(downloaded).toBe("up.png");
+      clickSpy.mockRestore();
     });
 
     it("uses Content-Disposition filename when present", async () => {
