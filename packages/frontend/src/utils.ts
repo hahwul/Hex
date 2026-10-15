@@ -36,7 +36,7 @@ export const asciiToHex = (ascii: string, originalHex?: string): string => {
       // UTF-8 encode so non-ASCII input never yields multi-digit "bytes"
       bytes.push(...encoder.encode(char));
     }
-    i += char.length;
+    i++; // one ASCII-view char per byte, counted by code point
   }
   return bytes.map((b) => b.toString(16).padStart(2, "0")).join(" ");
 };
@@ -229,19 +229,23 @@ export const encodeUtf8WithLimit = (
   input: string,
   maxBytes: number,
 ): Uint8Array => {
-  const encoder = new TextEncoder();
-  if (maxBytes <= 0) return encoder.encode(input);
+  const encoded = new TextEncoder().encode(input);
+  return encoded.subarray(0, utf8CutIndex(encoded, maxBytes));
+};
 
-  // Fast path: assume ASCII and check after encoding once.
-  const encoded = encoder.encode(input);
-  if (encoded.length <= maxBytes) return encoded;
-
-  // Walk back to the last UTF-8 sequence boundary.
+/**
+ * Largest cut index <= maxBytes that does not split a UTF-8 sequence.
+ * Backs off at most 3 bytes, so arbitrary (edited) binary is never hidden.
+ * @param maxBytes - Maximum byte length; <= 0 disables truncation
+ */
+export const utf8CutIndex = (encoded: Uint8Array, maxBytes: number): number => {
+  // `!(x > 0)` also treats NaN/undefined as "no limit" instead of slicing wrong.
+  if (!(maxBytes > 0) || encoded.length <= maxBytes) return encoded.length;
   let end = maxBytes;
-  while (end > 0 && (encoded[end]! & 0xc0) === 0x80) {
+  while (end > 0 && end > maxBytes - 3 && (encoded[end]! & 0xc0) === 0x80) {
     end--;
   }
-  return encoded.subarray(0, end);
+  return end;
 };
 
 /**

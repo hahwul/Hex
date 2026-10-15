@@ -505,6 +505,57 @@ describe("HexViewMode.vue", () => {
         expect(wrapper.text()).toContain("Test");
     });
 
+    it("keeps unsaved edits when the size limit changes", async () => {
+        window.location.hash = "#/replay/123";
+        const dispatch = editorMock("Test");
+        const wrapper = mount(HexViewMode, {
+            props: { ...defaultProps, request: { raw: "Test", host: "test", path: "/" } },
+        });
+        await editFirstLine(wrapper, "42 65 73 74");
+        await wrapper.find("select[title='Max data size']").setValue("51200");
+        expect(wrapper.find("td:nth-child(3)").text()).toBe("Best");
+
+        await wrapper.find("button[title='Save Changes']").trigger("click");
+        expect(dispatch.mock.calls[0]?.[0].changes.insert).toBe("Best");
+    });
+
+    it("refuses to save a lone LF the editor would turn into CRLF", async () => {
+        window.location.hash = "#/replay/123";
+        const dispatch = editorMock("Test");
+        const wrapper = mount(HexViewMode, {
+            props: { ...defaultProps, request: { raw: "Test", host: "test", path: "/" } },
+        });
+        await editFirstLine(wrapper, "54 0a 73 74");
+        await wrapper.find("button[title='Save Changes']").trigger("click");
+
+        expect(dispatch).not.toHaveBeenCalled();
+        expect(mockSdk.window.showToast).toHaveBeenCalledWith(expect.stringContaining("lone CR/LF"), { variant: "error" });
+    });
+
+    it("keeps a leading UTF-8 BOM on save", async () => {
+        window.location.hash = "#/replay/123";
+        const dispatch = editorMock("Test");
+        const wrapper = mount(HexViewMode, {
+            props: { ...defaultProps, request: { raw: "Test", host: "test", path: "/" } },
+        });
+        await editFirstLine(wrapper, "ef bb bf 54 65 73 74");
+        await wrapper.find("button[title='Save Changes']").trigger("click");
+
+        expect(dispatch.mock.calls[0]?.[0].changes.insert).toBe("\uFEFFTest");
+    });
+
+    it("accepts unspaced hex in the edit modal", async () => {
+        window.location.hash = "#/replay/123";
+        editorMock("Test");
+        const wrapper = mount(HexViewMode, {
+            props: { ...defaultProps, request: { raw: "Test", host: "test", path: "/" } },
+        });
+        await editFirstLine(wrapper, "42657374");
+
+        expect(wrapper.find(".fixed.inset-0").exists()).toBe(false);
+        expect(wrapper.find("td:nth-child(3)").text()).toBe("Best");
+    });
+
     it("accepts newline-separated hex in the edit modal", async () => {
         window.location.hash = "#/replay/123";
         editorMock("Test");
@@ -691,18 +742,26 @@ describe("HexViewMode.vue", () => {
 
     it("keeps leading/trailing spaces in ASCII queries", async () => {
       const wrapper = mount(HexViewMode, {
-        props: { ...defaultProps, request: { raw: "a b a", host: "test", path: "/" } },
+        props: { ...defaultProps, request: { raw: "ab b", host: "test", path: "/" } },
       });
       await wrapper.find("button[title*='Search']").trigger("click");
       await wrapper.findAll("button").find(b => b.text() === "ASCII")?.trigger("click");
       const searchInput = wrapper.find("input[placeholder*='Search ASCII']");
-      await searchInput.setValue(" b ");
+      // Trimmed, " b" would become "b" and match twice.
+      await searchInput.setValue(" b");
       await searchInput.trigger("input");
       expect(wrapper.text()).toContain("1/1");
+    });
 
-      await searchInput.setValue(" ");
+    it("does not show 'No match' for a whitespace-only hex query", async () => {
+      const wrapper = mount(HexViewMode, {
+        props: { ...defaultProps, request: { raw: "Hello", host: "test", path: "/" } },
+      });
+      await wrapper.find("button[title*='Search']").trigger("click");
+      const searchInput = wrapper.find("input[placeholder*='Search hex']");
+      await searchInput.setValue("  ");
       await searchInput.trigger("input");
-      expect(wrapper.text()).toContain("1/2");
+      expect(wrapper.text()).not.toContain("No match");
     });
 
     it("handles invalid hex input gracefully", async () => {
@@ -1257,6 +1316,17 @@ describe("HexViewMode.vue", () => {
       expect(wrapper.text()).not.toContain("Invalid offset");
     });
 
+    it("reads zero-padded offsets as hex, like the offset column", async () => {
+      const wrapper = mount(HexViewMode, {
+        props: { ...defaultProps, request: { raw: "0123456789ABCDEFGHIJKLMNOPQRSTUV", host: "test", path: "/" } },
+      });
+      await wrapper.find("button[title*='Go to offset']").trigger("click");
+      await wrapper.find("input[placeholder*='Hex (0x']").setValue("00000010");
+      await wrapper.findAll("button").find((b) => b.text() === "Go")?.trigger("click");
+      // Byte 0x10 = 'G' (47); decimal 10 would be 'A' (41).
+      expect(wrapper.find("td:nth-child(2) span.bg-cyan-500\\/50").text()).toBe("47");
+    });
+
     it("rejects offsets with trailing garbage", async () => {
       const wrapper = mount(HexViewMode, {
         props: { ...defaultProps, request: { raw: "Hello", host: "test", path: "/" } },
@@ -1352,7 +1422,7 @@ describe("HexViewMode.vue", () => {
 
       // Switch to Unlimited (0) -> no truncation
       const sizeSelect = wrapper.find("select[title='Max data size']");
-      await sizeSelect.setValue(0);
+      await sizeSelect.setValue("0");
 
       expect(wrapper.text()).not.toContain("(truncated)");
     });
@@ -1451,6 +1521,26 @@ describe("HexViewMode.vue", () => {
 
       external.remove();
       wrapper.unmount();
+    });
+  });
+
+  describe("Multiple panes", () => {
+    it("routes Ctrl+F only to the pane clicked last", async () => {
+      const mk = () => mount(HexViewMode, {
+        props: { ...defaultProps, request: { raw: "Hello", host: "test", path: "/" } },
+        attachTo: document.body,
+      });
+      const a = mk();
+      const b = mk();
+      (a.find("td:nth-child(2) span span").element as HTMLElement).click();
+
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "f", ctrlKey: true }));
+      await a.vm.$nextTick();
+
+      expect(a.find("input[placeholder*='Search']").exists()).toBe(true);
+      expect(b.find("input[placeholder*='Search']").exists()).toBe(false);
+      a.unmount();
+      b.unmount();
     });
   });
 

@@ -13,7 +13,7 @@ import {
   detectFileSignature,
   formatBytes,
   findHttpBodyOffset,
-  encodeUtf8WithLimit,
+  utf8CutIndex,
   parseContentDispositionFilename,
   sanitizeFilename,
 } from "../utils";
@@ -71,8 +71,14 @@ const rootRef = ref<HTMLElement | null>(null);
 // Don't hijack Ctrl+F/Ctrl+G when the user is typing in an unrelated input
 // (e.g. an editor elsewhere in the app). Inputs inside our own component
 // are still allowed so the shortcut works while the search bar has focus.
+// With request and response both in Hex mode, only the pane clicked last
+// takes the shortcut, so focus doesn't jump to the other pane.
+let lastClickInside = true;
+
 const shouldHandleShortcut = (): boolean => {
   const active = document.activeElement;
+  if (active && rootRef.value?.contains(active)) return true;
+  if (!lastClickInside) return false;
   if (!active || active === document.body) return true;
   const tag = active.tagName;
   const editable =
@@ -80,15 +86,16 @@ const shouldHandleShortcut = (): boolean => {
     tag === "TEXTAREA" ||
     tag === "SELECT" ||
     (active as HTMLElement).isContentEditable === true;
-  if (!editable) return true;
-  return rootRef.value?.contains(active) ?? false;
+  return !editable;
 };
 
 // Keyboard shortcuts handler
 const onKeydown = (e: KeyboardEvent) => {
-  // Ctrl+F: Open search
+  // Modifiers first: synthetic keydowns (e.g. Chrome autofill) have no key.
+  if (!e.ctrlKey && !e.metaKey) return;
   const key = e.key.toLowerCase();
-  if ((e.ctrlKey || e.metaKey) && key === "f") {
+  // Ctrl+F: Open search
+  if (key === "f") {
     if (!shouldHandleShortcut()) return;
     e.preventDefault();
     if (searchState.showSearch) searchInputRef.value?.focus();
@@ -96,7 +103,7 @@ const onKeydown = (e: KeyboardEvent) => {
     return;
   }
   // Ctrl+G: Open go to offset
-  if ((e.ctrlKey || e.metaKey) && key === "g") {
+  if (key === "g") {
     if (!shouldHandleShortcut()) return;
     e.preventDefault();
     if (gotoState.showGoto) gotoInputRef.value?.focus();
@@ -172,12 +179,8 @@ const props = defineProps<{
 // Modal state
 const modalState = reactive({
   showModal: false,
-  currentLine: null as {
-    offset: string;
-    hex: string;
-    ascii: string;
-    editing?: boolean;
-  } | null,
+  start: 0, // byte offset of the edited row
+  length: 0, // byte count of the edited row when opened
   currentHex: "",
   originalHex: "",
   currentAscii: "",
@@ -193,6 +196,11 @@ const searchState = reactive({
   showSearch: false,
 });
 
+// Spaces are significant in ASCII mode, so only trim hex queries.
+const effectiveQuery = computed(() =>
+  searchState.mode === "hex" ? searchState.query.trim() : searchState.query,
+);
+
 // Precomputed highlight set for O(1) lookup
 const highlightedOffsets = ref(new Set<number>());
 
@@ -202,9 +210,7 @@ const performSearch = () => {
   searchState.currentMatchIndex = -1;
   highlightedOffsets.value = new Set();
 
-  // Spaces are significant in ASCII mode, so only trim hex queries.
-  const query =
-    searchState.mode === "hex" ? searchState.query.trim() : searchState.query;
+  const query = effectiveQuery.value;
   if (!query || rawData.value.length === 0) return;
 
   let searchBytes: number[] = [];
@@ -270,10 +276,15 @@ const goToMatch = (direction: "next" | "prev") => {
 const scrollToLine = (lineIndex: number) => {
   const container = scrollContainerRef.value;
   if (!container) return;
-  const containerHeight = container.clientHeight;
-  const targetTop = lineIndex * ROW_HEIGHT - containerHeight / 2 + ROW_HEIGHT / 2;
-  container.scrollTo({ top: Math.max(0, targetTop), behavior: "smooth" });
-  scrollTop.value = Math.max(0, targetTop);
+  const viewHeight = container.clientHeight;
+  // Clamp: an unreachable target fires no scroll event and would blank rows.
+  const maxTop = Math.max(0, totalHeight.value - viewHeight);
+  const targetTop = Math.min(
+    maxTop,
+    Math.max(0, lineIndex * ROW_HEIGHT - viewHeight / 2 + ROW_HEIGHT / 2),
+  );
+  container.scrollTo({ top: targetTop, behavior: "smooth" });
+  scrollTop.value = targetTop;
 };
 
 const scrollToCurrentMatch = () => {
@@ -304,9 +315,7 @@ const toggleSearch = () => {
     nextTick(() => searchInputRef.value?.focus());
   } else {
     searchState.query = "";
-    searchState.matches = [];
-    searchState.currentMatchIndex = -1;
-    highlightedOffsets.value = new Set();
+    performSearch();
   }
 };
 
@@ -341,11 +350,12 @@ const goToOffset = () => {
   const input = gotoState.input.trim();
   if (!input) return;
 
-  // Digits only => decimal; 0x prefix or any A-F letter => hex.
+  // 0x prefix, A-F letters or zero padding (how offsets are displayed) =>
+  // hex; other digit strings => decimal.
   let offset = NaN;
   if (/^0x[0-9a-f]+$/i.test(input)) {
     offset = parseInt(input, 16);
-  } else if (/^\d+$/.test(input)) {
+  } else if (/^(0|[1-9]\d*)$/.test(input)) {
     offset = parseInt(input, 10);
   } else if (/^[0-9a-f]+$/i.test(input)) {
     offset = parseInt(input, 16);
@@ -518,17 +528,14 @@ const fullBytes = (): Uint8Array => {
   return bytes;
 };
 
-const getCopyBytes = (): Uint8Array => {
-  return hasSelection.value ? selectedBytes.value : fullBytes();
-};
-
+// Copy stays within the display limit: formatting a huge body as text
+// would freeze the UI. Export (binary) takes everything.
 const copyAs = async (format: CopyFormat) => {
-  const bytes = getCopyBytes();
+  const bytes = hasSelection.value ? selectedBytes.value : rawData.value;
   if (bytes.length === 0) return;
 
-  const text = formatBytes(bytes, format, bytesPerRow.value);
-
   try {
+    const text = formatBytes(bytes, format, bytesPerRow.value);
     await navigator.clipboard.writeText(text);
     props.sdk.window?.showToast?.("Copied to clipboard", { variant: "success" });
   } catch {
@@ -539,6 +546,7 @@ const copyAs = async (format: CopyFormat) => {
 
 // Close copy menu on outside click
 const onDocumentClick = (e: MouseEvent) => {
+  lastClickInside = rootRef.value?.contains(e.target as Node) ?? false;
   if (showCopyMenu.value) {
     const target = e.target as HTMLElement;
     if (!target.closest("[data-copy-menu]")) {
@@ -589,7 +597,7 @@ const suggestExportFilename = (): string => {
 
 // Export raw binary data as file download
 const exportBinary = () => {
-  const bytes = getCopyBytes();
+  const bytes = hasSelection.value ? selectedBytes.value : fullBytes();
   if (bytes.length === 0) return;
 
   const filename = suggestExportFilename();
@@ -620,14 +628,8 @@ const exportBinary = () => {
 // Get raw data from request or response
 const raw = computed(() => {
   let rawData = "";
-  if (isReplayTab.value && isRequest.value) {
-    const editor = props.sdk.window?.getActiveEditor?.();
-    if (editor) {
-      const editorView = editor.getEditorView();
-      if (editorView) {
-        rawData = editorView.state.doc.toString();
-      }
-    }
+  if (isEditable.value) {
+    rawData = replayEditorView.value?.state.doc.toString() ?? "";
   } else {
     rawData = props.request?.raw || props.response?.raw || "";
   }
@@ -649,6 +651,14 @@ const isReplayTab = computed(() => window.location.hash.includes("/replay"));
 // Editing is only allowed for requests in the Replay tab
 const isEditable = computed(() => isReplayTab.value && isRequest.value);
 
+// Captured once so Save writes to the editor the bytes were read from, not
+// whichever editor happens to be active when Save is clicked.
+const replayEditorView = computed(() =>
+  isEditable.value
+    ? props.sdk.window?.getActiveEditor?.()?.getEditorView()
+    : undefined,
+);
+
 // Open modal for editing (only in editable context)
 const openEditModal = (line: {
   offset: string;
@@ -657,7 +667,8 @@ const openEditModal = (line: {
   editing?: boolean;
 }) => {
   if (!isEditable.value) return;
-  modalState.currentLine = line;
+  modalState.start = parseInt(line.offset || "0", 16);
+  modalState.length = line.hex ? line.hex.split(" ").length : 0;
   modalState.currentHex = line.hex;
   modalState.originalHex = line.hex;
   modalState.currentAscii = hexToAscii(line.hex);
@@ -668,7 +679,8 @@ const openEditModal = (line: {
 
 // Update hex when ASCII changes
 const updateHexFromAscii = () => {
-  modalState.currentHex = asciiToHex(modalState.currentAscii, modalState.originalHex);
+  // Map "." against the current hex so earlier hex-box edits survive.
+  modalState.currentHex = asciiToHex(modalState.currentAscii, modalState.currentHex);
 };
 
 // Update ASCII when hex changes
@@ -678,18 +690,24 @@ const updateAsciiFromHex = () => {
 
 // Apply changes from modal
 const applyEdit = () => {
-  const tokens = modalState.currentHex.trim().split(/\s+/).filter(Boolean);
-  if (!tokens.every((t) => /^[0-9a-fA-F]{2}$/.test(t))) {
+  const hex = modalState.currentHex.replace(/\s+/g, "");
+  if (!/^(?:[0-9a-fA-F]{2})*$/.test(hex)) {
     props.sdk.window?.showToast?.(
-      "Invalid hex: use space-separated byte pairs (e.g. 48 65)",
+      "Invalid hex: use byte pairs (e.g. 48 65)",
       { variant: "error" },
     );
     return;
   }
-  if (modalState.currentLine) {
-    modalState.currentLine.hex = tokens.join(" ");
-    updateLine(modalState.currentLine);
-  }
+  const bytes = (hex.match(/../g) ?? []).map((h) => parseInt(h, 16));
+  // Splice by offset, so rows rebuilt while the modal was open can't drop it.
+  const data = rawData.value;
+  const head = data.subarray(0, modalState.start);
+  const rest = data.subarray(modalState.start + modalState.length);
+  const next = new Uint8Array(head.length + bytes.length + rest.length);
+  next.set(head);
+  next.set(bytes, head.length);
+  next.set(rest, head.length + bytes.length);
+  rawData.value = next;
   modalState.showModal = false;
 };
 
@@ -714,35 +732,37 @@ const rawData = ref<Uint8Array>(new Uint8Array());
 // Bytes cut off by the size limit; re-attached on save so nothing is lost.
 const truncatedTail = ref<Uint8Array>(new Uint8Array());
 
+// Split bytes into the displayed window and the hidden tail. Cuts at a
+// UTF-8 boundary so multi-byte chars never blow past the cap or split.
+const applySizeLimit = (full: Uint8Array) => {
+  const cut = utf8CutIndex(full, maxSizeBytes.value);
+  rawData.value = full.subarray(0, cut);
+  truncatedTail.value = full.subarray(cut);
+};
+
 // Initialize and watch for raw data changes
 watch(
-  [raw, maxSizeBytes],
-  ([newRaw]) => {
+  raw,
+  (newRaw) => {
     clearSelection();
     gotoState.highlightedOffset = -1;
+    gotoState.error = false;
     try {
-      if (!newRaw) {
-        rawData.value = new Uint8Array();
-        truncatedTail.value = new Uint8Array();
-        return;
-      }
-      // Truncate by byte length (after UTF-8 encoding) so multi-byte chars
-      // never blow past the cap or split surrogate pairs.
-      rawData.value = encodeUtf8WithLimit(newRaw, maxSizeBytes.value);
-      truncatedTail.value = new TextEncoder()
-        .encode(newRaw)
-        .subarray(rawData.value.length);
+      applySizeLimit(new TextEncoder().encode(newRaw));
     } catch (error) {
       console.error(
         "[Hex View Mode] Error converting raw to Uint8Array:",
         error,
       );
-      rawData.value = new Uint8Array();
-      truncatedTail.value = new Uint8Array();
+      applySizeLimit(new Uint8Array());
     }
   },
   { immediate: true },
 );
+
+// Re-window the current bytes instead of re-reading raw, so unsaved and
+// already-saved edits survive a size change.
+watch(maxSizeBytes, () => applySizeLimit(fullBytes()));
 
 // Detect file signature in the body of the HTTP data
 const detectedSignature = computed(() => {
@@ -799,29 +819,6 @@ watch(rawData, () => {
   }
 });
 
-// Update line and recalculate
-const updateLine = (line: {
-  offset: string;
-  hex: string;
-  ascii: string;
-  editing?: boolean;
-}) => {
-  // Update ASCII from hex using shared utility
-  line.ascii = hexToAscii(line.hex);
-
-  // Reconstruct rawData
-  const allHex = dumpLines.value
-    .map((l) => l.hex)
-    .join(" ")
-    .replace(/\s+/g, "");
-  const newBytes: number[] = [];
-  for (let i = 0; i < allHex.length; i += 2) {
-    const byte = parseInt(allHex.substring(i, i + 2), 16);
-    if (!isNaN(byte)) newBytes.push(byte);
-  }
-  rawData.value = new Uint8Array(newBytes);
-};
-
 const isTruncated = computed(() => truncatedTail.value.length > 0);
 
 // Calculate diff between original and current hex values
@@ -865,11 +862,16 @@ const saveChanges = async () => {
   try {
     // fatal: the editor holds text, so refuse instead of silently turning
     // invalid bytes into U+FFFD.
-    const newRaw = new TextDecoder("utf-8", { fatal: true }).decode(
-      fullBytes(),
-    );
+    const newRaw = new TextDecoder("utf-8", {
+      fatal: true,
+      ignoreBOM: true,
+    }).decode(fullBytes());
+    // The editor turns a lone CR or LF into a CRLF line break.
+    if (/\r(?!\n)|(?<!\r)\n/.test(newRaw)) {
+      throw new Error("lone CR/LF bytes cannot be kept by the request editor");
+    }
 
-    const editorView = props.sdk.window?.getActiveEditor?.()?.getEditorView();
+    const editorView = replayEditorView.value;
     if (!editorView) throw new Error("No active editor");
 
     // Replace the entire editor content with the modified raw data
@@ -1046,7 +1048,7 @@ const saveChanges = async () => {
             <template v-if="searchState.matches.length > 0">
               {{ searchState.currentMatchIndex + 1 }}/{{ searchState.matches.length }}
             </template>
-            <template v-else-if="searchState.query">
+            <template v-else-if="effectiveQuery">
               No match
             </template>
           </span>
