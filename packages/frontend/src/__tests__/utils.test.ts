@@ -58,6 +58,10 @@ describe("utils", () => {
       const hex = "20"; // Space
       expect(hexToAscii(hex)).toBe(" ");
     });
+
+    it("should accept newline-separated hex", () => {
+      expect(hexToAscii("48 65\n6c\t6c")).toBe("Hell");
+    });
   });
 
   describe("asciiToHex", () => {
@@ -100,6 +104,11 @@ describe("utils", () => {
       const ascii = "A..";
       const originalHex = "41"; // Only one byte
       expect(asciiToHex(ascii, originalHex)).toBe("41 2e 2e");
+    });
+
+    it("should UTF-8 encode non-ASCII characters", () => {
+      expect(asciiToHex("é")).toBe("c3 a9");
+      expect(asciiToHex("😀")).toBe("f0 9f 98 80");
     });
 
     it("should handle numbers", () => {

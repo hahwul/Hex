@@ -8,7 +8,7 @@
  * @returns ASCII representation with non-printable characters as "."
  */
 export const hexToAscii = (hex: string): string => {
-  const hexParts = hex.split(" ").filter((h) => h.length === 2);
+  const hexParts = hex.split(/\s+/).filter((h) => h.length === 2);
   const bytes = hexParts.map((h) => parseInt(h, 16)).filter((b) => !isNaN(b));
   return bytes
     .map((b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : "."))
@@ -22,28 +22,21 @@ export const hexToAscii = (hex: string): string => {
  * @returns Space-separated hex string
  */
 export const asciiToHex = (ascii: string, originalHex?: string): string => {
+  const originalBytes =
+    originalHex?.split(/\s+/).filter((h) => h.length === 2) ?? [];
+  const encoder = new TextEncoder();
   const bytes: number[] = [];
-  for (let i = 0; i < ascii.length; i++) {
-    const char = ascii[i];
-    if (!char) continue; // Skip undefined characters
-    if (char === ".") {
+  let i = 0;
+  for (const char of ascii) {
+    const originalByte = originalBytes[i];
+    if (char === "." && originalByte) {
       // Keep original byte for "." placeholders if available
-      if (originalHex) {
-        const originalBytes = originalHex
-          .split(" ")
-          .filter((h) => h.length === 2);
-        if (i < originalBytes.length) {
-          const originalByte = originalBytes[i];
-          if (originalByte) {
-            bytes.push(parseInt(originalByte, 16));
-            continue;
-          }
-        }
-      }
-      bytes.push(46); // ASCII code for "."
+      bytes.push(parseInt(originalByte, 16));
     } else {
-      bytes.push(char.charCodeAt(0));
+      // UTF-8 encode so non-ASCII input never yields multi-digit "bytes"
+      bytes.push(...encoder.encode(char));
     }
+    i += char.length;
   }
   return bytes.map((b) => b.toString(16).padStart(2, "0")).join(" ");
 };

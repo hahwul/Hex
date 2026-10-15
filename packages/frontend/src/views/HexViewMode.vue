@@ -641,8 +641,16 @@ const updateAsciiFromHex = () => {
 
 // Apply changes from modal
 const applyEdit = () => {
+  const tokens = modalState.currentHex.trim().split(/\s+/).filter(Boolean);
+  if (!tokens.every((t) => /^[0-9a-fA-F]{2}$/.test(t))) {
+    props.sdk.window?.showToast?.(
+      "Invalid hex: use space-separated byte pairs (e.g. 48 65)",
+      { variant: "error" },
+    );
+    return;
+  }
   if (modalState.currentLine) {
-    modalState.currentLine.hex = modalState.currentHex;
+    modalState.currentLine.hex = tokens.join(" ");
     updateLine(modalState.currentLine);
   }
   modalState.showModal = false;
@@ -666,6 +674,8 @@ const parsedHttp = computed(() => {
 
 // Raw data as ref for editing
 const rawData = ref<Uint8Array>(new Uint8Array());
+// Bytes cut off by the size limit; re-attached on save so nothing is lost.
+const truncatedTail = ref<Uint8Array>(new Uint8Array());
 
 // Initialize and watch for raw data changes
 watch(
@@ -674,17 +684,22 @@ watch(
     try {
       if (!newRaw) {
         rawData.value = new Uint8Array();
+        truncatedTail.value = new Uint8Array();
         return;
       }
       // Truncate by byte length (after UTF-8 encoding) so multi-byte chars
       // never blow past the cap or split surrogate pairs.
       rawData.value = encodeUtf8WithLimit(newRaw, maxSizeBytes.value);
+      truncatedTail.value = new TextEncoder()
+        .encode(newRaw)
+        .subarray(rawData.value.length);
     } catch (error) {
       console.error(
         "[Hex View Mode] Error converting raw to Uint8Array:",
         error,
       );
       rawData.value = new Uint8Array();
+      truncatedTail.value = new Uint8Array();
     }
   },
   { immediate: true },
@@ -768,21 +783,15 @@ const updateLine = (line: {
   rawData.value = new Uint8Array(newBytes);
 };
 
-// Compare the displayed byte length against what `raw` would encode to.
-// Using `raw` (normalized) keeps this aligned with the bytes actually shown.
-const isTruncated = computed(() => {
-  if (maxSizeBytes.value <= 0 || !raw.value) return false;
-  const encoder = new TextEncoder();
-  return encoder.encode(raw.value).length > maxSizeBytes.value;
-});
+const isTruncated = computed(() => truncatedTail.value.length > 0);
 
 // Calculate diff between original and current hex values
 const hexDiff = computed(() => {
   const original = modalState.originalHex
-    .split(" ")
+    .split(/\s+/)
     .filter((h) => h.length === 2);
   const current = modalState.currentHex
-    .split(" ")
+    .split(/\s+/)
     .filter((h) => h.length === 2);
   const maxLength = Math.max(original.length, current.length);
 
@@ -815,26 +824,26 @@ const saveChanges = async () => {
   if (!isReplayTab.value) return; // Only in Replay tab
 
   try {
-    // Convert rawData back to string
-    const decoder = new TextDecoder();
-    const newRaw = decoder.decode(rawData.value);
+    const bytes = new Uint8Array(
+      rawData.value.length + truncatedTail.value.length,
+    );
+    bytes.set(rawData.value);
+    bytes.set(truncatedTail.value, rawData.value.length);
+    // fatal: the editor holds text, so refuse instead of silently turning
+    // invalid bytes into U+FFFD.
+    const newRaw = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
 
-    // Get the active editor and update its content
-    const editor = props.sdk.window?.getActiveEditor?.();
-    if (editor) {
-      // Get the current editor view to update the content
-      const editorView = editor.getEditorView();
-      if (editorView) {
-        // Replace the entire editor content with the modified raw data
-        editorView.dispatch({
-          changes: {
-            from: 0,
-            to: editorView.state.doc.length,
-            insert: newRaw,
-          },
-        });
-      }
-    }
+    const editorView = props.sdk.window?.getActiveEditor?.()?.getEditorView();
+    if (!editorView) throw new Error("No active editor");
+
+    // Replace the entire editor content with the modified raw data
+    editorView.dispatch({
+      changes: {
+        from: 0,
+        to: editorView.state.doc.length,
+        insert: newRaw,
+      },
+    });
 
     props.sdk.window?.showToast?.("Request updated successfully", {
       variant: "success",

@@ -430,6 +430,91 @@ describe("HexViewMode.vue", () => {
         // Verify error toast
         expect(mockSdk.window.showToast).toHaveBeenCalledWith(expect.stringContaining("Failed to update request"), { variant: "error" });
     });
+
+    const editorMock = (raw: string) => {
+        const dispatch = vi.fn();
+        mockSdk.window.getActiveEditor.mockReturnValue({
+            getEditorView: () => ({
+                state: { doc: { toString: () => raw, length: raw.length } },
+                dispatch,
+            }),
+        });
+        return dispatch;
+    };
+
+    const editFirstLine = async (wrapper: ReturnType<typeof mount>, hex: string) => {
+        await wrapper.find("td:nth-child(2) span").trigger("dblclick");
+        await wrapper.find("textarea[placeholder*='Enter hex']").setValue(hex);
+        await wrapper.findAll("button").find(b => b.text() === "OK")?.trigger("click");
+    };
+
+    it("keeps bytes beyond the size limit when saving truncated data", async () => {
+        window.location.hash = "#/replay/123";
+        const raw = "a".repeat(10240) + "TAIL";
+        const dispatch = editorMock(raw);
+        const wrapper = mount(HexViewMode, {
+            props: { ...defaultProps, request: { raw, host: "test", path: "/" } },
+        });
+        expect(wrapper.text()).toContain("(truncated)");
+
+        await editFirstLine(wrapper, "42 " + "61 ".repeat(15).trim());
+        await wrapper.find("button[title='Save Changes']").trigger("click");
+
+        const insert: string = dispatch.mock.calls[0]?.[0].changes.insert;
+        expect(insert.length).toBe(raw.length);
+        expect(insert.startsWith("Ba")).toBe(true);
+        expect(insert.endsWith("TAIL")).toBe(true);
+    });
+
+    it("shows an error instead of success when there is no active editor", async () => {
+        window.location.hash = "#/replay/123";
+        mockSdk.window.getActiveEditor.mockReturnValue(undefined);
+        const wrapper = mount(HexViewMode, {
+            props: { ...defaultProps, request: { raw: "Test", host: "test", path: "/" } },
+        });
+        await wrapper.find("button[title='Save Changes']").trigger("click");
+
+        expect(mockSdk.window.showToast).toHaveBeenCalledWith(expect.stringContaining("No active editor"), { variant: "error" });
+        expect(mockSdk.window.showToast).not.toHaveBeenCalledWith("Request updated successfully", expect.anything());
+    });
+
+    it("refuses to save bytes that are not valid UTF-8", async () => {
+        window.location.hash = "#/replay/123";
+        const dispatch = editorMock("Test");
+        const wrapper = mount(HexViewMode, {
+            props: { ...defaultProps, request: { raw: "Test", host: "test", path: "/" } },
+        });
+        await editFirstLine(wrapper, "ff 65 73 74");
+        await wrapper.find("button[title='Save Changes']").trigger("click");
+
+        expect(dispatch).not.toHaveBeenCalled();
+        expect(mockSdk.window.showToast).toHaveBeenCalledWith(expect.stringContaining("Failed to update request"), { variant: "error" });
+    });
+
+    it("rejects malformed hex in the edit modal and keeps it open", async () => {
+        window.location.hash = "#/replay/123";
+        editorMock("Test");
+        const wrapper = mount(HexViewMode, {
+            props: { ...defaultProps, request: { raw: "Test", host: "test", path: "/" } },
+        });
+        await editFirstLine(wrapper, "4 65 zz");
+
+        expect(wrapper.find(".fixed.inset-0").exists()).toBe(true);
+        expect(mockSdk.window.showToast).toHaveBeenCalledWith(expect.stringContaining("Invalid hex"), { variant: "error" });
+        expect(wrapper.text()).toContain("Test");
+    });
+
+    it("accepts newline-separated hex in the edit modal", async () => {
+        window.location.hash = "#/replay/123";
+        editorMock("Test");
+        const wrapper = mount(HexViewMode, {
+            props: { ...defaultProps, request: { raw: "Test", host: "test", path: "/" } },
+        });
+        await editFirstLine(wrapper, "42 65\n73 74");
+
+        expect(wrapper.find(".fixed.inset-0").exists()).toBe(false);
+        expect(wrapper.find("td:nth-child(3)").text()).toBe("Best");
+    });
   });
 
   describe("Byte Pattern Search", () => {
