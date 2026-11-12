@@ -50,6 +50,11 @@ describe("utils", () => {
       expect(hexToAscii(hex)).toBe("He");
     });
 
+    it("should read unspaced hex as byte pairs", () => {
+      expect(hexToAscii("48656c6c6f")).toBe("Hello");
+      expect(hexToAscii("48 656c\n6c6f")).toBe("Hello");
+    });
+
     it("should handle DEL character (127) as non-printable", () => {
       const hex = "7f"; // DEL character
       expect(hexToAscii(hex)).toBe(".");
@@ -99,6 +104,10 @@ describe("utils", () => {
       const ascii = "A.B";
       const originalHex = "41 00 42"; // Middle byte is null
       expect(asciiToHex(ascii, originalHex)).toBe("41 00 42");
+    });
+
+    it("should map dot placeholders against unspaced original hex", () => {
+      expect(asciiToHex("A.", "4100")).toBe("41 00");
     });
 
     it("should use dot ASCII code when original hex is shorter", () => {
@@ -449,6 +458,14 @@ describe("utils", () => {
       expect(lines.length).toBe(1);
       // The ascii portion should appear at the same offset regardless of row fill level
       expect(lines[0]?.endsWith("Hello")).toBe(true);
+    });
+
+    it("should start hexdump offsets at baseOffset", () => {
+      const lines = formatBytes(new Uint8Array(20), "hexdump", 16, 0x30).split(
+        "\n",
+      );
+      expect(lines[0]?.startsWith("00000030")).toBe(true);
+      expect(lines[1]?.startsWith("00000040")).toBe(true);
     });
 
     it("should format hexdump offset in 8-digit hex", () => {

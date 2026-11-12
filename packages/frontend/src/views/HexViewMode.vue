@@ -8,6 +8,7 @@ import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from
 import {
   hexToAscii,
   asciiToHex,
+  hexPairs,
   parseHttpRaw,
   ensureCRLF,
   detectFileSignature,
@@ -535,7 +536,11 @@ const copyAs = async (format: CopyFormat) => {
   if (bytes.length === 0) return;
 
   try {
-    const text = formatBytes(bytes, format, bytesPerRow.value);
+    // Hexdump offsets should match the offset column, not restart at 0.
+    const base = hasSelection.value
+      ? Math.min(selectionState.start, selectionState.end)
+      : 0;
+    const text = formatBytes(bytes, format, bytesPerRow.value, base);
     await navigator.clipboard.writeText(text);
     props.sdk.window?.showToast?.("Copied to clipboard", { variant: "success" });
   } catch {
@@ -634,8 +639,10 @@ const raw = computed(() => {
     rawData = props.request?.raw || props.response?.raw || "";
   }
 
-  // Ensure proper HTTP line endings (CRLF) for requests
-  if (rawData && isRequest.value) {
+  // The Replay editor stores line breaks as LF, so restore CRLF there only.
+  // Captured requests are shown verbatim: a body LF (e.g. in an uploaded
+  // file) is a real 0a byte, not a line ending to rewrite.
+  if (rawData && isEditable.value) {
     rawData = ensureCRLF(rawData);
   }
 
@@ -813,7 +820,16 @@ watch(
 );
 
 // Re-run search when rawData changes (if search is active)
-watch(rawData, () => {
+watch(rawData, (data) => {
+  // An edit can shrink the data: keep selection/go-to within the new bytes.
+  const last = data.length - 1;
+  if (Math.min(selectionState.start, selectionState.end) > last) {
+    clearSelection();
+  } else {
+    selectionState.start = Math.min(selectionState.start, last);
+    selectionState.end = Math.min(selectionState.end, last);
+  }
+  if (gotoState.highlightedOffset > last) gotoState.highlightedOffset = -1;
   if (searchState.showSearch && searchState.query) {
     performSearch();
   }
@@ -823,12 +839,8 @@ const isTruncated = computed(() => truncatedTail.value.length > 0);
 
 // Calculate diff between original and current hex values
 const hexDiff = computed(() => {
-  const original = modalState.originalHex
-    .split(/\s+/)
-    .filter((h) => h.length === 2);
-  const current = modalState.currentHex
-    .split(/\s+/)
-    .filter((h) => h.length === 2);
+  const original = hexPairs(modalState.originalHex);
+  const current = hexPairs(modalState.currentHex);
   const maxLength = Math.max(original.length, current.length);
 
   const diff: Array<{

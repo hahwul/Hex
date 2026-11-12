@@ -126,8 +126,15 @@ describe("HexViewMode.vue", () => {
   });
 
   describe("Line Endings (CRLF)", () => {
-    it("normalizes LF to CRLF for requests", async () => {
+    it("normalizes LF to CRLF for requests read from the Replay editor", () => {
+      window.location.hash = "#/replay/123";
       const raw = "Line1\nLine2";
+      mockSdk.window.getActiveEditor.mockReturnValue({
+        getEditorView: () => ({
+          state: { doc: { toString: () => raw, length: raw.length } },
+          dispatch: vi.fn(),
+        }),
+      });
       const wrapper = mount(HexViewMode, {
         props: {
           ...defaultProps,
@@ -144,6 +151,25 @@ describe("HexViewMode.vue", () => {
       const hexHtml = hexTd.html();
       expect(hexHtml).toContain(">0d<");
       expect(hexHtml).toContain(">0a<");
+    });
+
+    it("shows captured (non-Replay) request bytes verbatim", () => {
+      window.location.hash = "#/http-history";
+      // A body LF is a real 0a byte (e.g. inside an uploaded file).
+      const raw = "POST / HTTP/1.1\r\nHost: a\r\n\r\nA\nB";
+      const wrapper = mount(HexViewMode, {
+        props: {
+          ...defaultProps,
+          request: { raw, host: "a", path: "/" },
+        },
+      });
+
+      expect(wrapper.text()).toContain(`${raw.length} bytes`);
+      const hex = wrapper
+        .findAll("td:nth-child(2)")
+        .map((td) => td.text())
+        .join(" ");
+      expect(hex).toContain("41 0a 42");
     });
 
     it("does not normalize LF to CRLF for responses", async () => {
@@ -542,6 +568,48 @@ describe("HexViewMode.vue", () => {
         await wrapper.find("button[title='Save Changes']").trigger("click");
 
         expect(dispatch.mock.calls[0]?.[0].changes.insert).toBe("\uFEFFTest");
+    });
+
+    it("previews unspaced hex the same way it is applied", async () => {
+      window.location.hash = "#/replay/123";
+      editorMock("Test");
+      const wrapper = mount(HexViewMode, {
+        props: {
+          ...defaultProps,
+          request: { raw: "Test", host: "test", path: "/" },
+        },
+      });
+      await wrapper.find("td:nth-child(2) span").trigger("dblclick");
+      await wrapper
+        .find("textarea[placeholder*='Enter hex']")
+        .setValue("42657374");
+
+      const ascii = wrapper.find(
+        "textarea[placeholder='ASCII representation']",
+      );
+      expect((ascii.element as HTMLTextAreaElement).value).toBe("Best");
+      // Only the first byte changed, so the diff shows exactly one change.
+      const removed = wrapper.findAll(".line-through").map((s) => s.text());
+      expect(removed).toEqual(["54"]);
+    });
+
+    it("clamps the selection when an edit removes selected bytes", async () => {
+      window.location.hash = "#/replay/123";
+      editorMock("Test");
+      const wrapper = mount(HexViewMode, {
+        props: {
+          ...defaultProps,
+          request: { raw: "Test", host: "test", path: "/" },
+        },
+      });
+      const bytes = wrapper.findAll("td:nth-child(2) span span.cursor-pointer");
+      await bytes[0]?.trigger("click");
+      await bytes[3]?.trigger("click", { shiftKey: true });
+      expect(wrapper.text()).toContain("00000000-00000003 (4 bytes)");
+
+      await editFirstLine(wrapper, "54 65");
+
+      expect(wrapper.text()).toContain("00000000-00000001 (2 bytes)");
     });
 
     it("accepts unspaced hex in the edit modal", async () => {
@@ -1236,6 +1304,34 @@ describe("HexViewMode.vue", () => {
         "Copied to clipboard",
         { variant: "success" }
       );
+    });
+
+    it("labels a copied hexdump selection with its real offsets", async () => {
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      Object.defineProperty(navigator, "clipboard", {
+        value: { writeText },
+        writable: true,
+        configurable: true,
+      });
+
+      const wrapper = mount(HexViewMode, {
+        props: {
+          ...defaultProps,
+          request: { raw: "A".repeat(16) + "BC", host: "test", path: "/" },
+        },
+      });
+
+      // Select the 2nd row's first byte (offset 0x10)
+      const bytes = wrapper.findAll("td:nth-child(2) span span.cursor-pointer");
+      await bytes[16]?.trigger("click");
+      await wrapper.find("button[title='Copy as...']").trigger("click");
+      await wrapper
+        .findAll("[data-copy-menu] button")
+        .find((b) => b.text() === "Hexdump")
+        ?.trigger("click");
+
+      const text: string = writeText.mock.calls[0]?.[0];
+      expect(text.startsWith("00000010  42 ")).toBe(true);
     });
 
     it("shows error toast when clipboard write fails", async () => {
