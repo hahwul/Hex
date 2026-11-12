@@ -3,13 +3,21 @@
  */
 
 /**
+ * Split hex text into byte pairs, ignoring whitespace, the same way the edit
+ * modal applies it (so "48656c" and "48 65 6c" preview identically).
+ */
+export const hexPairs = (hex: string): string[] =>
+  hex.replace(/\s+/g, "").match(/../g) ?? [];
+
+/**
  * Convert hex string to ASCII string
  * @param hex - Space-separated hex string (e.g., "48 65 6c 6c 6f")
  * @returns ASCII representation with non-printable characters as "."
  */
 export const hexToAscii = (hex: string): string => {
-  const hexParts = hex.split(/\s+/).filter((h) => h.length === 2);
-  const bytes = hexParts.map((h) => parseInt(h, 16)).filter((b) => !isNaN(b));
+  const bytes = hexPairs(hex)
+    .map((h) => parseInt(h, 16))
+    .filter((b) => !isNaN(b));
   return bytes
     .map((b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : "."))
     .join("");
@@ -22,8 +30,7 @@ export const hexToAscii = (hex: string): string => {
  * @returns Space-separated hex string
  */
 export const asciiToHex = (ascii: string, originalHex?: string): string => {
-  const originalBytes =
-    originalHex?.split(/\s+/).filter((h) => h.length === 2) ?? [];
+  const originalBytes = hexPairs(originalHex ?? "");
   const encoder = new TextEncoder();
   const bytes: number[] = [];
   let i = 0;
@@ -155,7 +162,12 @@ export const detectFileSignature = (data: Uint8Array): string | null => {
  */
 export type CopyFormat = "raw-hex" | "spaced-hex" | "c-array" | "python-bytes" | "json-array" | "hexdump";
 
-export const formatBytes = (bytes: Uint8Array, format: CopyFormat, bytesPerRow = 16): string => {
+export const formatBytes = (
+  bytes: Uint8Array,
+  format: CopyFormat,
+  bytesPerRow = 16,
+  baseOffset = 0, // hexdump: offset of bytes[0] in the original data
+): string => {
   if (bytes.length === 0) return "";
 
   switch (format) {
@@ -173,7 +185,7 @@ export const formatBytes = (bytes: Uint8Array, format: CopyFormat, bytesPerRow =
       const lines: string[] = [];
       for (let i = 0; i < bytes.length; i += bytesPerRow) {
         const chunk = bytes.slice(i, i + bytesPerRow);
-        const offset = i.toString(16).padStart(8, "0");
+        const offset = (baseOffset + i).toString(16).padStart(8, "0");
         const hex = Array.from(chunk).map((b) => b.toString(16).padStart(2, "0")).join(" ");
         const ascii = Array.from(chunk).map((b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : ".")).join("");
         lines.push(`${offset}  ${hex.padEnd(bytesPerRow * 3 - 1)}  ${ascii}`);
