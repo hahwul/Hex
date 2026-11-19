@@ -678,11 +678,16 @@ const editorText = (view: any): string =>
 // Editor that Save writes to. Without `view`, the active editor is only the
 // last focused one (maybe the response's), so it must hold this pane's draft;
 // with no draft to check against, trust only the one captured at mount.
+// Once found it is remembered, so focusing another editor between an edit and
+// Save does not strand the edit.
+let knownEditorView = mountedEditorView;
 const saveTarget = () => {
   if (props.view || !props.draft) return replayEditorView.value;
-  return [replayEditorView.value, activeEditorView()].find(
+  const found = [knownEditorView, activeEditorView()].find(
     (view) => view && editorText(view) === props.draft.raw,
   );
+  if (found) knownEditorView = found;
+  return found;
 };
 
 const NO_EDITOR_HINT =

@@ -1927,6 +1927,8 @@ describe("HexViewMode.vue", () => {
       const request = view("Test");
       active(request);
       await editFirstRow(wrapper, "42 65 73 74");
+      // Focusing the response again must not strand the accepted edit.
+      active(view("HTTP/1.1 200 OK"));
       await save(wrapper);
 
       expect(request.dispatch.mock.calls[0]?.[0].changes.insert).toBe("Best");
