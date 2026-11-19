@@ -21,48 +21,48 @@ export type FrontendSDK = Caido & {
     addRequestViewMode: (options: {
       label: string;
       view: { component: any };
-      condition: (request: any) => boolean;
+      when: (request: any) => boolean;
     }) => void;
     addResponseViewMode: (options: {
       label: string;
       view: { component: any };
-      condition: (response: any) => boolean;
+      when: (response: any) => boolean;
     }) => void;
   };
   replay?: {
     addRequestViewMode: (options: {
       label: string;
       view: { component: any };
-      condition: (request: any) => boolean;
+      when: (request: any) => boolean;
     }) => void;
     addResponseViewMode: (options: {
       label: string;
       view: { component: any };
-      condition: (response: any) => boolean;
+      when: (response: any) => boolean;
     }) => void;
   };
   search?: {
     addRequestViewMode: (options: {
       label: string;
       view: { component: any };
-      condition: (request: any) => boolean;
+      when: (request: any) => boolean;
     }) => void;
     addResponseViewMode: (options: {
       label: string;
       view: { component: any };
-      condition: (response: any) => boolean;
+      when: (response: any) => boolean;
     }) => void;
   };
   sitemap?: {
     addRequestViewMode: (options: {
       label: string;
       view: { component: any };
-      condition: (request: any) => boolean;
+      when: (request: any) => boolean;
     }) => void;
     addResponseViewMode: (options: {
       label: string;
       view: { component: any };
-      condition: (response: any) => boolean;
+      when: (response: any) => boolean;
     }) => void;
   };
 };
