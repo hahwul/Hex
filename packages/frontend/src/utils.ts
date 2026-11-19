@@ -412,12 +412,14 @@ export const capturedRawToBytes = (
     const declared = /^content-length:[ \t]*(\d+)[ \t]*$/im.exec(
       raw.slice(0, bodyStart),
     )?.[1];
-    if (declared !== undefined) {
+    const bodyChars = raw.length - bodyStart;
+    const bodyUtf8 = utf8Encoder.encode(raw.slice(bodyStart)).length;
+    // Same length either way (e.g. a non-ASCII path with an ASCII body): the
+    // header cannot tell them apart
+    if (declared !== undefined && bodyChars !== bodyUtf8) {
       const length = Number(declared);
-      if (length === raw.length - bodyStart) return asLatin1;
-      if (length === utf8Encoder.encode(raw.slice(bodyStart)).length) {
-        return asUtf8;
-      }
+      if (length === bodyChars) return asLatin1;
+      if (length === bodyUtf8) return asUtf8;
     }
   }
   // ponytail: no size to go by. C1 control characters mean binary; without

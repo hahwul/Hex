@@ -758,5 +758,13 @@ describe("utils", () => {
         expect(hex(capturedRawToBytes(caidoDecode(m)))).toBe(hex(m));
       }
     });
+
+    it("ignores a Content-Length that fits both readings", () => {
+      // UTF-8 "é" in the path, ASCII body: the body is 3 bytes either way
+      const m = new TextEncoder().encode(
+        "POST /café HTTP/1.1\r\nContent-Length: 3\r\n\r\nabc",
+      );
+      expect(hex(capturedRawToBytes(caidoDecode(m)))).toBe(hex(m));
+    });
   });
 });

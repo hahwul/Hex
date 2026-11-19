@@ -301,6 +301,29 @@ describe("HexViewMode.vue", () => {
       expect((hexTextarea.element as HTMLTextAreaElement).value).toBe("43");
     });
 
+    it("keeps placeholder bytes after a multi-byte character is typed", async () => {
+      window.location.hash = "#/replay/123";
+      const raw = "A\u0000B";
+      const wrapper = mount(HexViewMode, {
+        props: {
+          sdk: createEditorSdk(raw),
+          request: { raw, host: "test", path: "/" },
+        },
+      });
+      await wrapper.find("td:nth-child(2) span").trigger("dblclick");
+      const ascii = wrapper.find(
+        "textarea[placeholder='ASCII representation']",
+      );
+      const hexBox = wrapper.find("textarea[placeholder*='Enter hex']");
+
+      await ascii.setValue("é.B"); // A -> é (2 bytes)
+      expect((hexBox.element as HTMLTextAreaElement).value).toBe("c3 a9 00 42");
+      await ascii.setValue("é.BC"); // the 00 must not turn into a9
+      expect((hexBox.element as HTMLTextAreaElement).value).toBe(
+        "c3 a9 00 42 43",
+      );
+    });
+
     it("applies changes when OK is clicked", async () => {
       window.location.hash = "#/replay/123";
       const raw = "A";

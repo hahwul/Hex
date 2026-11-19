@@ -257,6 +257,9 @@ const modalState = reactive({
   originalHex: "",
   currentAscii: "",
   originalAscii: "",
+  // The hex the ASCII box text was last generated from: one ASCII character
+  // per byte of it, so "." placeholders map onto its bytes by position.
+  asciiBaseHex: "",
 });
 
 // Search state
@@ -814,6 +817,7 @@ const openEditModal = (line: { offset: string; hex: string }) => {
   modalState.length = line.hex ? line.hex.split(" ").length : 0;
   modalState.currentHex = line.hex;
   modalState.originalHex = line.hex;
+  modalState.asciiBaseHex = line.hex;
   modalState.currentAscii = hexToAscii(line.hex);
   modalState.originalAscii = hexToAscii(line.hex);
   modalState.showModal = true;
@@ -836,16 +840,19 @@ const onModalKeydown = (e: KeyboardEvent) => {
 
 // Update hex when ASCII changes
 const updateHexFromAscii = () => {
-  // Map "." against the current hex so earlier hex-box edits survive.
+  // Map "." against the hex the ASCII text came from (which includes earlier
+  // hex-box edits). Not the current hex: a multi-byte character typed here
+  // shifts its bytes against the ASCII characters.
   modalState.currentHex = asciiToHex(
     modalState.currentAscii,
-    modalState.currentHex,
+    modalState.asciiBaseHex,
   );
 };
 
 // Update ASCII when hex changes
 const updateAsciiFromHex = () => {
   modalState.currentAscii = hexToAscii(modalState.currentHex);
+  modalState.asciiBaseHex = modalState.currentHex;
 };
 
 // Apply changes from modal
