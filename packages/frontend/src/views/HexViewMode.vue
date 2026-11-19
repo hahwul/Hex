@@ -77,6 +77,8 @@ const rootRef = ref<HTMLElement | null>(null);
 let lastClickInside = true;
 
 const shouldHandleShortcut = (): boolean => {
+  // Caido keeps pages alive: a pane on a hidden page is detached but mounted.
+  if (!rootRef.value?.isConnected) return false;
   const active = document.activeElement;
   if (active && rootRef.value?.contains(active)) return true;
   if (!lastClickInside) return false;
@@ -175,6 +177,11 @@ const props = defineProps<{
   sdk: any;
   request?: any;
   response?: any;
+  // Writable (Replay) request panes only: the live editor text. `request`
+  // stays undefined there until the draft has been sent once.
+  draft?: any;
+  // The pane's own CodeMirror view (newer Caido only).
+  view?: any;
 }>();
 
 // Modal state
@@ -575,7 +582,7 @@ const suggestExportFilename = (): string => {
     }
   }
 
-  const path: string = props.request?.path || "";
+  const path: string = props.request?.path || props.draft?.path || "";
   if (path) {
     const lastSegment = path.split("/").filter(Boolean).pop();
     if (lastSegment) {
@@ -634,7 +641,10 @@ const exportBinary = () => {
 const raw = computed(() => {
   let rawData = "";
   if (isEditable.value) {
-    rawData = replayEditorView.value?.state.doc.toString() ?? "";
+    // Prefer the draft: it is this pane's text and updates with it, while
+    // the active editor can be another pane's (or nothing at all).
+    rawData =
+      props.draft?.raw ?? replayEditorView.value?.state.doc.toString() ?? "";
   } else {
     rawData = props.request?.raw || props.response?.raw || "";
   }
@@ -650,7 +660,7 @@ const raw = computed(() => {
 });
 
 // Determine if it's a request or response
-const isRequest = computed(() => !!props.request);
+const isRequest = computed(() => !!props.request || !!props.draft);
 
 // Determine if it's in Replay tab (where editing is allowed)
 const isReplayTab = computed(() => window.location.hash.includes("/replay"));
@@ -658,13 +668,25 @@ const isReplayTab = computed(() => window.location.hash.includes("/replay"));
 // Editing is only allowed for requests in the Replay tab
 const isEditable = computed(() => isReplayTab.value && isRequest.value);
 
+const activeEditorView = () =>
+  props.sdk.window?.getActiveEditor?.()?.getEditorView();
+
 // Captured once so Save writes to the editor the bytes were read from, not
 // whichever editor happens to be active when Save is clicked.
 const replayEditorView = computed(() =>
-  isEditable.value
-    ? props.sdk.window?.getActiveEditor?.()?.getEditorView()
-    : undefined,
+  isEditable.value ? (props.view ?? activeEditorView()) : undefined,
 );
+
+// Editor that Save writes to. Without `view`, the active editor is only the
+// last focused one (maybe the response's), so it must hold this pane's draft;
+// with no draft to check against, trust only the one captured at mount.
+const saveTarget = () => {
+  if (props.view || !props.draft) return replayEditorView.value;
+  const draft = ensureCRLF(props.draft.raw);
+  return [replayEditorView.value, activeEditorView()].find(
+    (view) => view && ensureCRLF(view.state.doc.toString()) === draft,
+  );
+};
 
 // Open modal for editing (only in editable context)
 const openEditModal = (line: {
@@ -751,18 +773,27 @@ const applySizeLimit = (full: Uint8Array) => {
 watch(
   raw,
   (newRaw) => {
-    clearSelection();
-    gotoState.highlightedOffset = -1;
-    gotoState.error = false;
+    let next = new Uint8Array();
     try {
-      applySizeLimit(new TextEncoder().encode(newRaw));
+      next = new TextEncoder().encode(newRaw);
     } catch (error) {
       console.error(
         "[Hex View Mode] Error converting raw to Uint8Array:",
         error,
       );
-      applySizeLimit(new Uint8Array());
     }
+    // Save echoes back through the draft; keep selection and search position.
+    const current = fullBytes();
+    if (
+      next.length === current.length &&
+      next.every((b, i) => b === current[i])
+    ) {
+      return;
+    }
+    clearSelection();
+    gotoState.highlightedOffset = -1;
+    gotoState.error = false;
+    applySizeLimit(next);
   },
   { immediate: true },
 );
@@ -883,8 +914,14 @@ const saveChanges = async () => {
       throw new Error("lone CR/LF bytes cannot be kept by the request editor");
     }
 
-    const editorView = replayEditorView.value;
-    if (!editorView) throw new Error("No active editor");
+    const editorView = saveTarget();
+    if (!editorView) {
+      throw new Error(
+        props.draft
+          ? "request editor not found; click into the request in Raw view, then save from Hex again"
+          : "No active editor",
+      );
+    }
 
     // Replace the entire editor content with the modified raw data
     editorView.dispatch({

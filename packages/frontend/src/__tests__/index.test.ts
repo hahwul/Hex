@@ -38,11 +38,12 @@ describe("init", () => {
       expect(options.label).toBe("Hex");
       expect(options.view.component).toBe(HexViewMode);
 
-      // Test condition
-      expect(options.condition({ raw: "data" })).toBe(true);
-      expect(options.condition({ raw: "" })).toBe(false);
-      expect(options.condition({})).toBe(false);
-      expect(options.condition(null)).toBe(false);
+      // Caido only honours `when`
+      expect(options.when({ raw: "data" })).toBe(true);
+      expect(options.when({ raw: "" })).toBe(false);
+      expect(options.when({})).toBe(false);
+      expect(options.when(null)).toBe(false);
+      expect(options.condition).toBeUndefined();
     });
   });
 });

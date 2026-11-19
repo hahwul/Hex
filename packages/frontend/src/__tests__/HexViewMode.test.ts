@@ -1531,6 +1531,7 @@ describe("HexViewMode.vue", () => {
           ...defaultProps,
           request: { raw: "Hello", host: "test", path: "/" },
         },
+        attachTo: document.body,
       });
 
       expect(wrapper.find("input[placeholder*='Search']").exists()).toBe(false);
@@ -1549,6 +1550,7 @@ describe("HexViewMode.vue", () => {
           ...defaultProps,
           request: { raw: "Hello", host: "test", path: "/" },
         },
+        attachTo: document.body,
       });
 
       expect(wrapper.find("input[placeholder*='Hex (0x']").exists()).toBe(false);
@@ -1807,6 +1809,125 @@ describe("HexViewMode.vue", () => {
 
       expect(createObjectURLMock).not.toHaveBeenCalled();
       expect(clickMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Replay draft and view props", () => {
+    const view = (raw: string) => ({
+      state: { doc: { toString: () => raw, length: raw.length } },
+      dispatch: vi.fn(),
+    });
+    const active = (v: ReturnType<typeof view> | undefined) =>
+      mockSdk.window.getActiveEditor.mockReturnValue(
+        v ? { getEditorView: () => v } : undefined,
+      );
+    const save = (wrapper: ReturnType<typeof mount>) =>
+      wrapper.find("button[title='Save Changes']").trigger("click");
+
+    beforeEach(() => {
+      window.location.hash = "#/replay/123";
+    });
+
+    it("shows an unsent draft (no request) and lets it be saved", async () => {
+      active(undefined);
+      const own = view("GET / HTTP/1.1\n\n");
+      const wrapper = mount(HexViewMode, {
+        props: { ...defaultProps, draft: { raw: "GET / HTTP/1.1\n\n" }, view: own },
+      });
+
+      expect(wrapper.text()).toContain("18 bytes"); // LF restored to CRLF
+      await save(wrapper);
+      expect(own.dispatch).toHaveBeenCalledTimes(1);
+    });
+
+    it("reads the draft, not whichever editor was focused last", () => {
+      active(view("HTTP/1.1 200 OK\n\nresponse body"));
+      const wrapper = mount(HexViewMode, {
+        props: { ...defaultProps, request: { raw: "old" }, draft: { raw: "Draft" } },
+      });
+
+      expect(wrapper.text()).toContain("5 bytes");
+      expect(wrapper.find("td:nth-child(3)").text()).toBe("Draft");
+    });
+
+    it("follows the draft when it changes", async () => {
+      active(undefined);
+      const wrapper = mount(HexViewMode, {
+        props: { ...defaultProps, draft: { raw: "One" } },
+      });
+      await wrapper.setProps({ draft: { raw: "Three" } });
+
+      expect(wrapper.find("td:nth-child(3)").text()).toBe("Three");
+    });
+
+    it("saves to the pane's own view even when another editor is active", async () => {
+      const other = view("Test");
+      const own = view("Test");
+      active(other);
+      const wrapper = mount(HexViewMode, {
+        props: { ...defaultProps, draft: { raw: "Test" }, view: own },
+      });
+      await save(wrapper);
+
+      expect(own.dispatch).toHaveBeenCalledTimes(1);
+      expect(other.dispatch).not.toHaveBeenCalled();
+    });
+
+    it("refuses to write into an editor that does not hold the draft", async () => {
+      const response = view("HTTP/1.1 200 OK");
+      active(response);
+      const wrapper = mount(HexViewMode, {
+        props: { ...defaultProps, draft: { raw: "Test" } },
+      });
+      await save(wrapper);
+
+      expect(response.dispatch).not.toHaveBeenCalled();
+      expect(mockSdk.window.showToast).toHaveBeenCalledWith(
+        expect.stringContaining("request editor not found"),
+        { variant: "error" },
+      );
+    });
+
+    it("finds the request editor at save time once it holds the draft", async () => {
+      active(view("HTTP/1.1 200 OK"));
+      const wrapper = mount(HexViewMode, {
+        props: { ...defaultProps, draft: { raw: "Test" } },
+      });
+      const request = view("Test");
+      active(request);
+      await save(wrapper);
+
+      expect(request.dispatch).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps the selection when a save echoes back through the draft", async () => {
+      const own = view("Test");
+      const wrapper = mount(HexViewMode, {
+        props: { ...defaultProps, draft: { raw: "Test" }, view: own },
+      });
+      await wrapper.find("td:nth-child(2) span span").trigger("click");
+      expect(wrapper.text()).toContain("1 byte(s) selected");
+
+      // Caido hands the saved text back as a new draft object.
+      await wrapper.setProps({ draft: { raw: "Test" } });
+      expect(wrapper.text()).toContain("1 byte(s) selected");
+
+      await wrapper.setProps({ draft: { raw: "Other" } });
+      expect(wrapper.text()).not.toContain("selected");
+    });
+  });
+
+  describe("Kept-alive pages", () => {
+    it("ignores shortcuts while the pane is detached from the document", async () => {
+      const wrapper = mount(HexViewMode, {
+        props: { ...defaultProps, request: { raw: "Hello" } },
+      });
+
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "f", ctrlKey: true }));
+      await wrapper.vm.$nextTick();
+
+      expect(wrapper.find("input[placeholder*='Search']").exists()).toBe(false);
+      wrapper.unmount();
     });
   });
 });
