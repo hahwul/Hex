@@ -297,6 +297,135 @@ export const utf8CutIndex = (encoded: Uint8Array, maxBytes: number): number => {
   return end;
 };
 
+// Caido hands plugins HTTP messages as strings, not bytes. Its codec:
+//   bytes -> string  UTF-8 if the bytes are valid UTF-8, otherwise one
+//                    character per byte (Latin-1)
+//   string -> bytes  (what Replay sends) code points up to U+00FF are that
+//                    single byte, anything above is UTF-8
+const utf8Encoder = new TextEncoder();
+
+export const isValidUtf8 = (bytes: Uint8Array): boolean => {
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/** The bytes Caido sends for this editor text. */
+export const editorTextToBytes = (text: string): Uint8Array => {
+  const out = new Uint8Array(text.length * 3);
+  let n = 0;
+  for (let i = 0; i < text.length; ) {
+    const unit = text.charCodeAt(i);
+    if (unit <= 0xff) {
+      out[n++] = unit;
+      i++;
+      continue;
+    }
+    // A run of characters above U+00FF is plain UTF-8
+    let end = i + 1;
+    while (end < text.length && text.charCodeAt(end) > 0xff) end++;
+    n += utf8Encoder.encodeInto(text.slice(i, end), out.subarray(n)).written;
+    i = end;
+  }
+  return out.slice(0, n);
+};
+
+// Length of the well-formed UTF-8 sequence starting at `i`, or 0
+const utf8SequenceLength = (b: Uint8Array, i: number): number => {
+  const cont = (k: number) => ((b[k] ?? 0) & 0xc0) === 0x80;
+  const b0 = b[i]!;
+  const b1 = b[i + 1] ?? 0;
+  if (b0 < 0x80) return 1;
+  if (b0 >= 0xc2 && b0 <= 0xdf) return cont(i + 1) ? 2 : 0;
+  if (b0 >= 0xe0 && b0 <= 0xef) {
+    if (!cont(i + 1) || !cont(i + 2)) return 0;
+    if (b0 === 0xe0 && b1 < 0xa0) return 0; // overlong
+    if (b0 === 0xed && b1 > 0x9f) return 0; // surrogate
+    return 3;
+  }
+  if (b0 >= 0xf0 && b0 <= 0xf4) {
+    if (!cont(i + 1) || !cont(i + 2) || !cont(i + 3)) return 0;
+    if (b0 === 0xf0 && b1 < 0x90) return 0; // overlong
+    if (b0 === 0xf4 && b1 > 0x8f) return 0; // above U+10FFFF
+    return 4;
+  }
+  return 0;
+};
+
+/**
+ * Editor text that Caido sends as exactly `bytes`: UTF-8 for characters above
+ * U+00FF stays readable, every other byte becomes the character with its code
+ * (so "é" in UTF-8 reads "Ã©", which is what Caido needs to send c3 a9).
+ */
+export const bytesToEditorText = (bytes: Uint8Array): string => {
+  const parts: string[] = [];
+  let text = "";
+  for (let i = 0; i < bytes.length; ) {
+    const b0 = bytes[i]!;
+    // c2/c3 sequences are U+0080-U+00FF, which Caido would send as one byte
+    const len = b0 < 0xc4 ? 1 : utf8SequenceLength(bytes, i);
+    if (len < 2) {
+      text += String.fromCharCode(b0);
+      i++;
+    } else {
+      let cp = b0 & (0xff >> (len + 1));
+      for (let k = 1; k < len; k++) cp = (cp << 6) | (bytes[i + k]! & 0x3f);
+      text += String.fromCodePoint(cp);
+      i += len;
+    }
+    if (text.length > 8192) {
+      parts.push(text);
+      text = "";
+    }
+  }
+  parts.push(text);
+  return parts.join("");
+};
+
+/**
+ * The bytes behind the `raw` string of a captured message. `byteLength` is
+ * the message's real size when the host gives it (responses).
+ */
+export const capturedRawToBytes = (
+  raw: string,
+  byteLength?: number,
+): Uint8Array => {
+  const asUtf8 = utf8Encoder.encode(raw);
+  // ASCII only, or characters no single byte stands for: only UTF-8 reads so
+  if (asUtf8.length === raw.length || /[Ā-￿]/.test(raw)) {
+    return asUtf8;
+  }
+  const asLatin1 = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) asLatin1[i] = raw.charCodeAt(i);
+  // Caido would have read these bytes as UTF-8, into a different string
+  if (isValidUtf8(asLatin1)) return asUtf8;
+
+  // Both readings are possible from here on: non-UTF-8 bytes shown one
+  // character each, or UTF-8 text that happens to stay within U+00FF.
+  if (byteLength === asLatin1.length) return asLatin1;
+  if (byteLength === asUtf8.length) return asUtf8;
+  const bodyStart = raw.indexOf("\r\n\r\n") + 4;
+  if (bodyStart >= 4) {
+    const declared = /^content-length:[ \t]*(\d+)[ \t]*$/im.exec(
+      raw.slice(0, bodyStart),
+    )?.[1];
+    if (declared !== undefined) {
+      const length = Number(declared);
+      if (length === raw.length - bodyStart) return asLatin1;
+      if (length === utf8Encoder.encode(raw.slice(bodyStart)).length) {
+        return asUtf8;
+      }
+    }
+  }
+  // ponytail: no size to go by. C1 control characters mean binary; without
+  // them assume UTF-8 text, which is wrong for Latin-1 text sent without a
+  // Content-Length.
+  return /[\u0080-\u009f]/.test(raw) ? asLatin1 : asUtf8;
+};
+
 /**
  * Sanitize a filename suggested by Content-Disposition or a URL path.
  * Strips path separators, control characters, and anything else that could

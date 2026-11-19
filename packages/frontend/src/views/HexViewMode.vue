@@ -11,17 +11,22 @@ import {
   onUnmounted,
   reactive,
   ref,
+  toRaw,
   watch,
 } from "vue";
 
 import {
   asciiToHex,
+  bytesToEditorText,
+  capturedRawToBytes,
   detectFileSignature,
+  editorTextToBytes,
   ensureCRLF,
   findHttpBodyOffset,
   formatBytes,
   hexPairs,
   hexToAscii,
+  isValidUtf8,
   parseContentDispositionFilename,
   parseHttpRaw,
   sanitizeFilename,
@@ -134,7 +139,10 @@ let resizeObserver: ResizeObserver | undefined;
 const searchInputRef = ref<HTMLInputElement | null>(null);
 const gotoInputRef = ref<HTMLInputElement | null>(null);
 
-const totalRows = computed(() => dumpLines.value.length);
+// At least one row: empty data renders a placeholder.
+const totalRows = computed(() =>
+  Math.max(1, Math.ceil(rawData.value.length / bytesPerRow.value)),
+);
 const totalHeight = computed(() => totalRows.value * ROW_HEIGHT);
 
 const visibleRange = computed(() => {
@@ -150,13 +158,28 @@ const visibleRange = computed(() => {
   return { start, end };
 });
 
+// Only the rows on screen are built: a row object for every row of a
+// multi-MB body stalled each data, size-limit and layout change.
 const visibleLines = computed(() => {
+  const data = rawData.value;
+  if (data.length === 0) {
+    return [{ _index: 0, offset: "", hex: "", ascii: "No data to display" }];
+  }
   const { start, end } = visibleRange.value;
-  return dumpLines.value.slice(start, end).map((line, i) => ({
-    ...line,
-    _index: start + i,
-    _ref: line, // keep reference to original for modal editing
-  }));
+  const lines = [];
+  for (let row = start; row < end; row++) {
+    const i = row * bytesPerRow.value;
+    const chunk = Array.from(data.subarray(i, i + bytesPerRow.value));
+    lines.push({
+      _index: row,
+      offset: i.toString(16).padStart(8, "0"),
+      hex: chunk.map((b) => b.toString(16).padStart(2, "0")).join(" "),
+      ascii: chunk
+        .map((b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : "."))
+        .join(""),
+    });
+  }
+  return lines;
 });
 
 const onScroll = (e: Event) => {
@@ -250,14 +273,10 @@ const effectiveQuery = computed(() =>
   searchState.mode === "hex" ? searchState.query.trim() : searchState.query,
 );
 
-// Precomputed highlight set for O(1) lookup
-const highlightedOffsets = ref(new Set<number>());
-
 // Perform search on rawData
 const performSearch = () => {
   searchState.matches = [];
   searchState.currentMatchIndex = -1;
-  highlightedOffsets.value = new Set();
 
   const query = effectiveQuery.value;
   if (!query || rawData.value.length === 0) return;
@@ -272,16 +291,20 @@ const performSearch = () => {
       searchBytes.push(parseInt(cleaned.substring(i, i + 2), 16));
     }
   } else {
-    // ASCII mode
-    const encoder = new TextEncoder();
-    searchBytes = Array.from(encoder.encode(query));
+    // The query as this pane's text holds it: what Caido sends for it in the
+    // editor; in a captured message, how Caido read it (UTF-8 if the message
+    // is valid UTF-8, else one byte per character).
+    const asUtf8 = !isEditable.value && isValidUtf8(fullBytes());
+    searchBytes = Array.from(
+      asUtf8 ? new TextEncoder().encode(query) : editorTextToBytes(query),
+    );
   }
 
   if (searchBytes.length === 0) return;
 
   // Find all occurrences in rawData
   const data = rawData.value;
-  const offsets = new Set<number>();
+  const matches: { byteOffset: number; length: number }[] = [];
   for (let i = 0; i <= data.length - searchBytes.length; i++) {
     let found = true;
     for (let j = 0; j < searchBytes.length; j++) {
@@ -291,16 +314,13 @@ const performSearch = () => {
       }
     }
     if (found) {
-      searchState.matches.push({
+      matches.push({
         byteOffset: i,
         length: searchBytes.length,
       });
-      for (let j = 0; j < searchBytes.length; j++) {
-        offsets.add(i + j);
-      }
     }
   }
-  highlightedOffsets.value = offsets;
+  searchState.matches = matches;
 
   if (searchState.matches.length > 0) {
     searchState.currentMatchIndex = 0;
@@ -344,9 +364,25 @@ const scrollToCurrentMatch = () => {
   nextTick(() => scrollToLine(lineIndex));
 };
 
-// Check if a byte at a given global offset is part of any match (O(1) lookup)
+// Is the byte part of any match? Matches are sorted and of equal length, so
+// only the last one starting at or before the byte can cover it. (A Set of
+// every matched byte took ~0.5 s to build on a 5 MB body.)
 const isHighlighted = (globalByteOffset: number): boolean => {
-  return highlightedOffsets.value.has(globalByteOffset);
+  // Raw: a reactive proxy per probed match made scrolling slower than this.
+  const matches = toRaw(searchState.matches);
+  let lo = 0;
+  let hi = matches.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (matches[mid]!.byteOffset <= globalByteOffset) lo = mid;
+    else hi = mid - 1;
+  }
+  const m = matches[lo];
+  return (
+    m !== undefined &&
+    globalByteOffset >= m.byteOffset &&
+    globalByteOffset < m.byteOffset + m.length
+  );
 };
 
 // Check if a byte is part of the current (focused) match
@@ -570,6 +606,17 @@ const getStructureClass = (globalOffset: number): string => {
   return "bg-emerald-500/15";
 };
 
+// Per byte, under search, go-to and selection colours.
+const byteStructureClass = (globalOffset: number): string => {
+  const structure = getStructureClass(globalOffset);
+  if (structure === "") return "";
+  const marked =
+    isHighlighted(globalOffset) ||
+    isGotoHighlighted(globalOffset) ||
+    isSelected(globalOffset);
+  return marked ? "" : structure;
+};
+
 // Multi-format copy
 const showCopyMenu = ref(false);
 
@@ -607,7 +654,10 @@ const copyAs = async (format: CopyFormat) => {
 
 // Close copy menu on outside click
 const onDocumentClick = (e: MouseEvent) => {
-  lastClickInside = rootRef.value?.contains(e.target as Node) ?? false;
+  // The modal is outside rootRef but belongs to this pane.
+  lastClickInside = [rootRef.value, modalRef.value].some(
+    (el) => el?.contains(e.target as Node) === true,
+  );
   if (showCopyMenu.value) {
     const target = e.target as HTMLElement;
     if (!target.closest("[data-copy-menu]")) {
@@ -753,12 +803,7 @@ const NO_EDITOR_HINT =
   "Hex can't reach the request editor: switch to Raw, click into the request, then come back to Hex";
 
 // Open modal for editing (only in editable context)
-const openEditModal = (line: {
-  offset: string;
-  hex: string;
-  ascii: string;
-  editing?: boolean;
-}) => {
+const openEditModal = (line: { offset: string; hex: string }) => {
   if (!isEditable.value) return;
   // Don't accept edits that Save would then have nowhere to write.
   if (present(props.draft) && !saveTarget()) {
@@ -772,6 +817,21 @@ const openEditModal = (line: {
   modalState.currentAscii = hexToAscii(line.hex);
   modalState.originalAscii = hexToAscii(line.hex);
   modalState.showModal = true;
+  nextTick(() => modalHexRef.value?.focus());
+};
+
+const modalRef = ref<HTMLElement | null>(null);
+const modalHexRef = ref<HTMLTextAreaElement | null>(null);
+
+// Keys typed in the modal stay there: no pane shortcuts underneath.
+const onModalKeydown = (e: KeyboardEvent) => {
+  e.stopPropagation();
+  if (e.key === "Escape") {
+    cancelEdit();
+  } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    applyEdit();
+  }
 };
 
 // Update hex when ASCII changes
@@ -842,15 +902,16 @@ const applySizeLimit = (full: Uint8Array) => {
 watch(
   raw,
   (newRaw) => {
-    let next = new Uint8Array();
-    try {
-      next = new TextEncoder().encode(newRaw);
-    } catch (error) {
-      console.error(
-        "[Hex View Mode] Error converting raw to Uint8Array:",
-        error,
-      );
-    }
+    // Caido hands over text: map it back to the bytes it stands for.
+    const length = props.response?.length;
+    const next = isEditable.value
+      ? editorTextToBytes(newRaw)
+      : capturedRawToBytes(
+          newRaw,
+          newRaw === props.response?.raw && typeof length === "number"
+            ? length
+            : undefined,
+        );
     // Save echoes back through the draft; keep selection and search position.
     const current = fullBytes();
     if (
@@ -879,45 +940,6 @@ const detectedSignature = computed(() => {
     bodyStart > 0 ? rawData.value.subarray(bodyStart) : rawData.value;
   return detectFileSignature(checkData);
 });
-
-// Generate dump lines for table display
-const dumpLines = ref<
-  { offset: string; hex: string; ascii: string; editing?: boolean }[]
->([]);
-
-// Update dump lines when rawData changes
-watch(
-  [rawData, bytesPerRow, byteGrouping],
-  () => {
-    const data = rawData.value;
-    if (data.length === 0) {
-      dumpLines.value = [
-        {
-          offset: "",
-          hex: "",
-          ascii: "No data to display",
-          editing: false,
-        },
-      ];
-      return;
-    }
-
-    const lines = [];
-    for (let i = 0; i < data.length; i += bytesPerRow.value) {
-      const chunk = data.slice(i, i + bytesPerRow.value);
-      const offset = i.toString(16).padStart(8, "0");
-      const hex = Array.from(chunk)
-        .map((b) => b.toString(16).padStart(2, "0"))
-        .join(" ");
-      const ascii = Array.from(chunk)
-        .map((b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : "."))
-        .join("");
-      lines.push({ offset, hex, ascii, editing: false });
-    }
-    dumpLines.value = lines;
-  },
-  { immediate: true },
-);
 
 // Re-run search when rawData changes (if search is active)
 watch(rawData, (data) => {
@@ -972,12 +994,8 @@ const saveChanges = () => {
   if (!isReplayTab.value) return; // Only in Replay tab
 
   try {
-    // fatal: the editor holds text, so refuse instead of silently turning
-    // invalid bytes into U+FFFD.
-    const newRaw = new TextDecoder("utf-8", {
-      fatal: true,
-      ignoreBOM: true,
-    }).decode(fullBytes());
+    // Text that Caido sends as exactly these bytes.
+    const newRaw = bytesToEditorText(fullBytes());
     // Read back through doc.toString() (hosts without a draft), a lone CR or
     // LF would come back as a CRLF line break.
     if (!present(props.draft) && /\r(?!\n)|(?<!\r)\n/.test(newRaw)) {
@@ -1300,10 +1318,7 @@ const saveChanges = () => {
                   v-for="line in visibleLines"
                   :key="line._index"
                   :data-hex-row="line._index"
-                  :class="[
-                    'hover:bg-surface-700',
-                    getStructureClass(line._index * bytesPerRow),
-                  ]"
+                  class="hover:bg-surface-700"
                   :style="{ height: ROW_HEIGHT + 'px' }"
                 >
                   <td
@@ -1321,7 +1336,7 @@ const saveChanges = () => {
                   <td
                     class="px-2 py-1 border-r border-surface-600 relative"
                     :style="{ width: columnWidths.hex + 'px' }"
-                    @dblclick="openEditModal(line._ref)"
+                    @dblclick="openEditModal(line)"
                   >
                     <span
                       class="font-mono whitespace-pre"
@@ -1331,11 +1346,18 @@ const saveChanges = () => {
                         v-for="(byte, bIdx) in line.hex.split(' ')"
                         :key="bIdx"
                       >
-                        <span v-if="bIdx > 0">{{
-                          bIdx % byteGrouping === 0 ? " " : ""
-                        }}</span>
+                        <span
+                          v-if="bIdx > 0"
+                          :class="
+                            getStructureClass(line._index * bytesPerRow + bIdx)
+                          "
+                          >{{ bIdx % byteGrouping === 0 ? " " : "" }}</span
+                        >
                         <span
                           :class="{
+                            [byteStructureClass(
+                              line._index * bytesPerRow + bIdx,
+                            )]: true,
                             'bg-yellow-500/30 text-yellow-200':
                               isHighlighted(line._index * bytesPerRow + bIdx) &&
                               !isCurrentMatch(line._index * bytesPerRow + bIdx),
@@ -1380,13 +1402,16 @@ const saveChanges = () => {
                       width: columnWidths.ascii + 'px',
                     }"
                   >
-                    <span class="font-mono">
+                    <span class="font-mono whitespace-pre">
                       <template
                         v-for="(char, cIdx) in line.ascii.split('')"
                         :key="cIdx"
                       >
                         <span
                           :class="{
+                            [byteStructureClass(
+                              line._index * bytesPerRow + cIdx,
+                            )]: true,
                             'text-surface-300':
                               !isHighlighted(
                                 line._index * bytesPerRow + cIdx,
@@ -1507,7 +1532,9 @@ const saveChanges = () => {
   <!-- Edit Modal -->
   <div
     v-if="modalState.showModal"
+    ref="modalRef"
     class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+    @keydown="onModalKeydown"
   >
     <div class="bg-surface-800 p-6 rounded-lg shadow-lg max-w-5xl w-full mx-4">
       <h3 class="text-lg font-semibold text-surface-200 mb-4">
@@ -1518,6 +1545,7 @@ const saveChanges = () => {
       <div class="mb-4">
         <label class="block text-sm text-surface-300 mb-2">Editor:</label>
         <textarea
+          ref="modalHexRef"
           v-model="modalState.currentHex"
           class="w-full h-32 bg-surface-900 text-surface-300 p-3 rounded border border-surface-600 font-mono text-sm resize-none"
           placeholder="Enter hex values (e.g., 48 65 6c 6c 6f)"
