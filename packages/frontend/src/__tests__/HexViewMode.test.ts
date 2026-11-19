@@ -1813,8 +1813,13 @@ describe("HexViewMode.vue", () => {
   });
 
   describe("Replay draft and view props", () => {
+    // Like Caido's request editor: sliceDoc() is the exact text, while
+    // doc.toString() joins lines with LF.
     const view = (raw: string) => ({
-      state: { doc: { toString: () => raw, length: raw.length } },
+      state: {
+        sliceDoc: () => raw,
+        doc: { toString: () => raw.replace(/\r\n/g, "\n"), length: raw.length },
+      },
       dispatch: vi.fn(),
     });
     const active = (v: ReturnType<typeof view> | undefined) =>
@@ -1823,6 +1828,12 @@ describe("HexViewMode.vue", () => {
       );
     const save = (wrapper: ReturnType<typeof mount>) =>
       wrapper.find("button[title='Save Changes']").trigger("click");
+    const editFirstRow = async (wrapper: ReturnType<typeof mount>, hex: string) => {
+      await wrapper.find("td:nth-child(2) span").trigger("dblclick");
+      await wrapper.find("textarea[placeholder*='Enter hex']").setValue(hex);
+      await wrapper.findAll("button").find((b) => b.text() === "OK")?.trigger("click");
+    };
+    const GET = "GET / HTTP/1.1\r\n\r\n";
 
     beforeEach(() => {
       window.location.hash = "#/replay/123";
@@ -1830,18 +1841,30 @@ describe("HexViewMode.vue", () => {
 
     it("shows an unsent draft (no request) and lets it be saved", async () => {
       active(undefined);
-      const own = view("GET / HTTP/1.1\n\n");
+      const own = view(GET);
       const wrapper = mount(HexViewMode, {
-        props: { ...defaultProps, draft: { raw: "GET / HTTP/1.1\n\n" }, view: own },
+        props: { ...defaultProps, draft: { raw: GET }, view: own },
       });
 
-      expect(wrapper.text()).toContain("18 bytes"); // LF restored to CRLF
+      expect(wrapper.text()).toContain("18 bytes");
       await save(wrapper);
       expect(own.dispatch).toHaveBeenCalledTimes(1);
     });
 
+    it("shows and saves a bare LF in the body as it is", async () => {
+      const raw = "POST / HTTP/1.1\r\nHost: a\r\n\r\nx\ny";
+      const own = view(raw);
+      const wrapper = mount(HexViewMode, {
+        props: { ...defaultProps, draft: { raw }, view: own },
+      });
+
+      expect(wrapper.text()).toContain("31 bytes"); // not 32: no CR added
+      await save(wrapper);
+      expect(own.dispatch.mock.calls[0]?.[0].changes.insert).toBe(raw);
+    });
+
     it("reads the draft, not whichever editor was focused last", () => {
-      active(view("HTTP/1.1 200 OK\n\nresponse body"));
+      active(view("HTTP/1.1 200 OK\r\n\r\nresponse body"));
       const wrapper = mount(HexViewMode, {
         props: { ...defaultProps, request: { raw: "old" }, draft: { raw: "Draft" } },
       });
@@ -1873,31 +1896,40 @@ describe("HexViewMode.vue", () => {
       expect(other.dispatch).not.toHaveBeenCalled();
     });
 
-    it("refuses to write into an editor that does not hold the draft", async () => {
+    it("refuses to edit or write when no editor holds the draft", async () => {
       const response = view("HTTP/1.1 200 OK");
       active(response);
       const wrapper = mount(HexViewMode, {
         props: { ...defaultProps, draft: { raw: "Test" } },
       });
-      await save(wrapper);
 
+      // Edits would be lost, so the modal does not even open.
+      await wrapper.find("td:nth-child(2) span").trigger("dblclick");
+      expect(wrapper.find("textarea").exists()).toBe(false);
+      expect(mockSdk.window.showToast).toHaveBeenCalledWith(
+        expect.stringContaining("can't reach the request editor"),
+        { variant: "warning" },
+      );
+
+      await save(wrapper);
       expect(response.dispatch).not.toHaveBeenCalled();
       expect(mockSdk.window.showToast).toHaveBeenCalledWith(
-        expect.stringContaining("request editor not found"),
+        expect.stringContaining("can't reach the request editor"),
         { variant: "error" },
       );
     });
 
     it("finds the request editor at save time once it holds the draft", async () => {
-      active(view("HTTP/1.1 200 OK"));
+      active(view("HTTP/1.1 200 OK")); // focused at mount: the response
       const wrapper = mount(HexViewMode, {
         props: { ...defaultProps, draft: { raw: "Test" } },
       });
       const request = view("Test");
       active(request);
+      await editFirstRow(wrapper, "42 65 73 74");
       await save(wrapper);
 
-      expect(request.dispatch).toHaveBeenCalledTimes(1);
+      expect(request.dispatch.mock.calls[0]?.[0].changes.insert).toBe("Best");
     });
 
     it("keeps the selection when a save echoes back through the draft", async () => {
@@ -1905,11 +1937,12 @@ describe("HexViewMode.vue", () => {
       const wrapper = mount(HexViewMode, {
         props: { ...defaultProps, draft: { raw: "Test" }, view: own },
       });
+      await editFirstRow(wrapper, "42 65 73 74");
       await wrapper.find("td:nth-child(2) span span").trigger("click");
-      expect(wrapper.text()).toContain("1 byte(s) selected");
+      await save(wrapper);
 
-      // Caido hands the saved text back as a new draft object.
-      await wrapper.setProps({ draft: { raw: "Test" } });
+      // The host hands the saved text back as the new draft.
+      await wrapper.setProps({ draft: { raw: "Best" } });
       expect(wrapper.text()).toContain("1 byte(s) selected");
 
       await wrapper.setProps({ draft: { raw: "Other" } });

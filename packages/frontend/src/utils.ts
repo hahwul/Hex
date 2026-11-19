@@ -36,9 +36,11 @@ export const asciiToHex = (ascii: string, originalHex?: string): string => {
   let i = 0;
   for (const char of ascii) {
     const originalByte = originalBytes[i];
-    if (char === "." && originalByte) {
-      // Keep original byte for "." placeholders if available
-      bytes.push(parseInt(originalByte, 16));
+    const original = originalByte ? parseInt(originalByte, 16) : 0x2e;
+    if (char === "." && (original < 32 || original >= 127)) {
+      // "." standing in for a non-printable byte: keep that byte. Over a
+      // printable byte it is a typed dot.
+      bytes.push(original);
     } else {
       // UTF-8 encode so non-ASCII input never yields multi-digit "bytes"
       bytes.push(...encoder.encode(char));

@@ -110,6 +110,12 @@ describe("utils", () => {
       expect(asciiToHex("A.", "4100")).toBe("41 00");
     });
 
+    it("treats a dot typed over a printable byte as a dot", () => {
+      // a_c -> a.c: only non-printable bytes are shown as ".", so this one was typed
+      expect(asciiToHex("a.c", "61 5f 63")).toBe("61 2e 63");
+      expect(asciiToHex("a.c", "61 00 63")).toBe("61 00 63");
+    });
+
     it("should use dot ASCII code when original hex is shorter", () => {
       const ascii = "A..";
       const originalHex = "41"; // Only one byte

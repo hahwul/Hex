@@ -639,24 +639,16 @@ const exportBinary = () => {
 
 // Get raw data from request or response
 const raw = computed(() => {
-  let rawData = "";
-  if (isEditable.value) {
-    // Prefer the draft: it is this pane's text and updates with it, while
-    // the active editor can be another pane's (or nothing at all).
-    rawData =
-      props.draft?.raw ?? replayEditorView.value?.state.doc.toString() ?? "";
-  } else {
-    rawData = props.request?.raw || props.response?.raw || "";
+  if (!isEditable.value) {
+    // Captured messages are shown verbatim: a body LF (e.g. in an uploaded
+    // file) is a real 0a byte, not a line ending to rewrite.
+    return props.request?.raw || props.response?.raw || "";
   }
-
-  // The Replay editor stores line breaks as LF, so restore CRLF there only.
-  // Captured requests are shown verbatim: a body LF (e.g. in an uploaded
-  // file) is a real 0a byte, not a line ending to rewrite.
-  if (rawData && isEditable.value) {
-    rawData = ensureCRLF(rawData);
-  }
-
-  return rawData;
+  // The draft is this pane's exact text and updates with it, while the active
+  // editor can be another pane's (or nothing at all).
+  if (props.draft) return props.draft.raw ?? "";
+  // Hosts without a draft: doc.toString() joins lines with LF, so restore CRLF.
+  return ensureCRLF(replayEditorView.value?.state.doc.toString() ?? "");
 });
 
 // Determine if it's a request or response
@@ -671,22 +663,30 @@ const isEditable = computed(() => isReplayTab.value && isRequest.value);
 const activeEditorView = () =>
   props.sdk.window?.getActiveEditor?.()?.getEditorView();
 
-// Captured once so Save writes to the editor the bytes were read from, not
-// whichever editor happens to be active when Save is clicked.
+// Captured once (in setup, so not tracked) so Save writes to the editor the
+// bytes were read from, not whichever editor is active when Save is clicked.
+const mountedEditorView = isEditable.value ? activeEditorView() : undefined;
 const replayEditorView = computed(() =>
-  isEditable.value ? (props.view ?? activeEditorView()) : undefined,
+  isEditable.value ? (props.view ?? mountedEditorView) : undefined,
 );
+
+// Exact editor text; doc.toString() would join lines with LF whatever the
+// editor's line separator is.
+const editorText = (view: any): string =>
+  view.state.sliceDoc?.() ?? view.state.doc.toString();
 
 // Editor that Save writes to. Without `view`, the active editor is only the
 // last focused one (maybe the response's), so it must hold this pane's draft;
 // with no draft to check against, trust only the one captured at mount.
 const saveTarget = () => {
   if (props.view || !props.draft) return replayEditorView.value;
-  const draft = ensureCRLF(props.draft.raw);
   return [replayEditorView.value, activeEditorView()].find(
-    (view) => view && ensureCRLF(view.state.doc.toString()) === draft,
+    (view) => view && editorText(view) === props.draft.raw,
   );
 };
+
+const NO_EDITOR_HINT =
+  "Hex can't reach the request editor: switch to Raw, click into the request, then come back to Hex";
 
 // Open modal for editing (only in editable context)
 const openEditModal = (line: {
@@ -696,6 +696,11 @@ const openEditModal = (line: {
   editing?: boolean;
 }) => {
   if (!isEditable.value) return;
+  // Don't accept edits that Save would then have nowhere to write.
+  if (props.draft && !saveTarget()) {
+    props.sdk.window?.showToast?.(NO_EDITOR_HINT, { variant: "warning" });
+    return;
+  }
   modalState.start = parseInt(line.offset || "0", 16);
   modalState.length = line.hex ? line.hex.split(" ").length : 0;
   modalState.currentHex = line.hex;
@@ -909,18 +914,15 @@ const saveChanges = async () => {
       fatal: true,
       ignoreBOM: true,
     }).decode(fullBytes());
-    // The editor turns a lone CR or LF into a CRLF line break.
-    if (/\r(?!\n)|(?<!\r)\n/.test(newRaw)) {
+    // Read back through doc.toString() (hosts without a draft), a lone CR or
+    // LF would come back as a CRLF line break.
+    if (!props.draft && /\r(?!\n)|(?<!\r)\n/.test(newRaw)) {
       throw new Error("lone CR/LF bytes cannot be kept by the request editor");
     }
 
     const editorView = saveTarget();
     if (!editorView) {
-      throw new Error(
-        props.draft
-          ? "request editor not found; click into the request in Raw view, then save from Hex again"
-          : "No active editor",
-      );
+      throw new Error(props.draft ? NO_EDITOR_HINT : "No active editor");
     }
 
     // Replace the entire editor content with the modified raw data
