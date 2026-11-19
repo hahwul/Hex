@@ -70,7 +70,9 @@ export class HexEditor extends EventTarget {
               );
             } else {
               // Revert invalid input to current byte value
-              inputEl.value = this.data[i + idx]!.toString(16).padStart(2, "0").toUpperCase();
+              inputEl.value = this.data[i + idx]!.toString(16)
+                .padStart(2, "0")
+                .toUpperCase();
             }
           });
           rowDiv.appendChild(input);

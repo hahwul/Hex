@@ -1,10 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { mount } from '@vue/test-utils';
-import HexView from '../views/HexView.vue';
-import { HexEditor } from '../HexEditor';
+import { mount } from "@vue/test-utils";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { HexEditor } from "../HexEditor";
+import HexView from "../views/HexView.vue";
 
 // Mock HexEditor
-vi.mock('../HexEditor', () => {
+vi.mock("../HexEditor", () => {
   return {
     HexEditor: vi.fn().mockImplementation(function () {
       return {
@@ -16,7 +17,7 @@ vi.mock('../HexEditor', () => {
   };
 });
 
-describe('HexView.vue', () => {
+describe("HexView.vue", () => {
   let wrapper: ReturnType<typeof mount>;
   let mockHexEditorInstance: any;
 
@@ -24,7 +25,7 @@ describe('HexView.vue', () => {
     vi.clearAllMocks();
   });
 
-  it('renders and initializes HexEditor', () => {
+  it("renders and initializes HexEditor", () => {
     const modelValue = new Uint8Array([1, 2, 3]);
     const isEditable = true;
 
@@ -39,11 +40,11 @@ describe('HexView.vue', () => {
     expect(HexEditor).toHaveBeenCalledWith(
       expect.any(HTMLElement),
       modelValue,
-      isEditable
+      isEditable,
     );
   });
 
-  it('updates data when modelValue prop changes', async () => {
+  it("updates data when modelValue prop changes", async () => {
     const initialValue = new Uint8Array([1]);
     wrapper = mount(HexView, {
       props: {
@@ -60,7 +61,7 @@ describe('HexView.vue', () => {
     expect(mockHexEditorInstance.setData).toHaveBeenCalledWith(newValue);
   });
 
-  it('updates editable state when isEditable prop changes', async () => {
+  it("updates editable state when isEditable prop changes", async () => {
     wrapper = mount(HexView, {
       props: {
         modelValue: new Uint8Array([]),
@@ -75,7 +76,7 @@ describe('HexView.vue', () => {
     expect(mockHexEditorInstance.setEditable).toHaveBeenCalledWith(true);
   });
 
-  it('emits update:modelValue when HexEditor changes (if initially editable)', () => {
+  it("emits update:modelValue when HexEditor changes (if initially editable)", () => {
     const modelValue = new Uint8Array([1]);
     wrapper = mount(HexView, {
       props: {
@@ -88,9 +89,10 @@ describe('HexView.vue', () => {
 
     // Simulate change event
     // Find the callback passed to addEventListener
-    const addEventListenerCall = mockHexEditorInstance.addEventListener.mock.calls.find(
-      (call: any[]) => call[0] === 'change'
-    );
+    const addEventListenerCall =
+      mockHexEditorInstance.addEventListener.mock.calls.find(
+        (call: any[]) => call[0] === "change",
+      );
     expect(addEventListenerCall).toBeDefined();
     const callback = addEventListenerCall[1];
 
@@ -102,7 +104,7 @@ describe('HexView.vue', () => {
     callback(event);
 
     // Verify emission
-    expect(wrapper.emitted('update:modelValue')).toBeTruthy();
-    expect(wrapper.emitted('update:modelValue')![0]).toEqual([newValue]);
+    expect(wrapper.emitted("update:modelValue")).toBeTruthy();
+    expect(wrapper.emitted("update:modelValue")![0]).toEqual([newValue]);
   });
 });

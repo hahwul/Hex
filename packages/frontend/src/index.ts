@@ -1,12 +1,12 @@
+import "./styles/index.css";
 import type { FrontendSDK } from "./types";
 import HexViewMode from "./views/HexViewMode.vue";
-import "./styles/index.css";
 
 export const init = (sdk: FrontendSDK) => {
   // Only show the Hex view mode when there's actually raw bytes to render.
   // Caido reads this as `when`; any other option name is silently ignored.
   const when = (data: { raw?: string } | null | undefined): boolean =>
-    !!data?.raw;
+    (data?.raw ?? "") !== "";
 
   const viewMode = {
     label: "Hex",

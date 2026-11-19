@@ -86,5 +86,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
-      #- name: Run linter
-      #  run: pnpm lint
+      # No --fix here, so formatting drift fails the build
+      - name: Run linter
+        run: pnpm exec eslint packages/*/src

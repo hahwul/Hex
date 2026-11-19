@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
 import { mount } from "@vue/test-utils";
+import { describe, expect, it, vi } from "vitest";
 import type { App } from "vue";
+
 import { SDKPlugin, useSDK } from "../plugins/sdk";
 import type { FrontendSDK } from "../types";
 

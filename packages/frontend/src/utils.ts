@@ -36,7 +36,8 @@ export const asciiToHex = (ascii: string, originalHex?: string): string => {
   let i = 0;
   for (const char of ascii) {
     const originalByte = originalBytes[i];
-    const original = originalByte ? parseInt(originalByte, 16) : 0x2e;
+    const original =
+      originalByte !== undefined ? parseInt(originalByte, 16) : 0x2e;
     if (char === "." && (original < 32 || original >= 127)) {
       // "." standing in for a non-printable byte: keep that byte. Over a
       // printable byte it is a typed dot.
@@ -73,7 +74,7 @@ export const parseHttpRaw = (raw: string) => {
   const headers: Record<string, string> = {};
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i];
-    if (!line) continue;
+    if (line === undefined || line === "") continue;
     const colonIndex = line.indexOf(":");
     if (colonIndex > 0) {
       const name = line.substring(0, colonIndex).trim();
@@ -119,7 +120,13 @@ const FILE_SIGNATURES: FileSignature[] = [
   { name: "Mach-O (64)", bytes: [0xfe, 0xed, 0xfa, 0xcf] },
   // Other
   { name: "WASM", bytes: [0x00, 0x61, 0x73, 0x6d] },
-  { name: "SQLite", bytes: [0x53, 0x51, 0x4c, 0x69, 0x74, 0x65, 0x20, 0x66, 0x6f, 0x72, 0x6d, 0x61, 0x74, 0x20, 0x33, 0x00] },
+  {
+    name: "SQLite",
+    bytes: [
+      0x53, 0x51, 0x4c, 0x69, 0x74, 0x65, 0x20, 0x66, 0x6f, 0x72, 0x6d, 0x61,
+      0x74, 0x20, 0x33, 0x00,
+    ],
+  },
   { name: "FLAC", bytes: [0x66, 0x4c, 0x61, 0x43] },
   { name: "OGG", bytes: [0x4f, 0x67, 0x67, 0x53] },
   { name: "MP3 (ID3)", bytes: [0x49, 0x44, 0x33] },
@@ -134,7 +141,7 @@ export const detectFileSignature = (data: Uint8Array): string | null => {
   if (data.length === 0) return null;
 
   for (const sig of FILE_SIGNATURES) {
-    const offset = sig.offset || 0;
+    const offset = sig.offset ?? 0;
     if (data.length < offset + sig.bytes.length) continue;
 
     let match = true;
@@ -148,7 +155,13 @@ export const detectFileSignature = (data: Uint8Array): string | null => {
     if (match) {
       // Special check for WebP: bytes 8-11 must be "WEBP"
       if (sig.name === "WebP") {
-        if (data.length < 12 || data[8] !== 0x57 || data[9] !== 0x45 || data[10] !== 0x42 || data[11] !== 0x50) {
+        if (
+          data.length < 12 ||
+          data[8] !== 0x57 ||
+          data[9] !== 0x45 ||
+          data[10] !== 0x42 ||
+          data[11] !== 0x50
+        ) {
           continue;
         }
       }
@@ -162,7 +175,13 @@ export const detectFileSignature = (data: Uint8Array): string | null => {
 /**
  * Format bytes in various programming-friendly formats
  */
-export type CopyFormat = "raw-hex" | "spaced-hex" | "c-array" | "python-bytes" | "json-array" | "hexdump";
+export type CopyFormat =
+  | "raw-hex"
+  | "spaced-hex"
+  | "c-array"
+  | "python-bytes"
+  | "json-array"
+  | "hexdump";
 
 export const formatBytes = (
   bytes: Uint8Array,
@@ -174,13 +193,25 @@ export const formatBytes = (
 
   switch (format) {
     case "raw-hex":
-      return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
+      return Array.from(bytes)
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
     case "spaced-hex":
-      return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join(" ");
+      return Array.from(bytes)
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join(" ");
     case "c-array":
-      return Array.from(bytes).map((b) => "\\x" + b.toString(16).padStart(2, "0")).join("");
+      return Array.from(bytes)
+        .map((b) => "\\x" + b.toString(16).padStart(2, "0"))
+        .join("");
     case "python-bytes":
-      return "b'" + Array.from(bytes).map((b) => "\\x" + b.toString(16).padStart(2, "0")).join("") + "'";
+      return (
+        "b'" +
+        Array.from(bytes)
+          .map((b) => "\\x" + b.toString(16).padStart(2, "0"))
+          .join("") +
+        "'"
+      );
     case "json-array":
       return "[" + Array.from(bytes).join(", ") + "]";
     case "hexdump": {
@@ -188,8 +219,12 @@ export const formatBytes = (
       for (let i = 0; i < bytes.length; i += bytesPerRow) {
         const chunk = bytes.slice(i, i + bytesPerRow);
         const offset = (baseOffset + i).toString(16).padStart(8, "0");
-        const hex = Array.from(chunk).map((b) => b.toString(16).padStart(2, "0")).join(" ");
-        const ascii = Array.from(chunk).map((b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : ".")).join("");
+        const hex = Array.from(chunk)
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join(" ");
+        const ascii = Array.from(chunk)
+          .map((b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : "."))
+          .join("");
         lines.push(`${offset}  ${hex.padEnd(bytesPerRow * 3 - 1)}  ${ascii}`);
       }
       return lines.join("\n");
@@ -267,9 +302,13 @@ export const utf8CutIndex = (encoded: Uint8Array, maxBytes: number): number => {
  * Strips path separators, control characters, and anything else that could
  * be used to escape the intended download location.
  */
-export const sanitizeFilename = (input: string, fallback = "export.bin"): string => {
+export const sanitizeFilename = (
+  input: string,
+  fallback = "export.bin",
+): string => {
   // Drop CR/LF and other control chars, then strip path separators.
   let cleaned = input
+    // eslint-disable-next-line no-control-regex -- stripping them is the point
     .replace(/[\x00-\x1f\x7f]/g, "")
     .replace(/[\\/]/g, "_")
     .trim();
@@ -293,11 +332,11 @@ export const parseContentDispositionFilename = (
   // RFC 5987: filename*=<charset>'<lang>'<percent-encoded>
   // Language tag is optional but the single-quote separators are not.
   const extMatch = header.match(/filename\*\s*=\s*([^;]+)/i);
-  if (extMatch?.[1]) {
+  if (extMatch?.[1] !== undefined) {
     const value = extMatch[1].trim();
     const parsed = value.match(/^([^']*)'([^']*)'(.+)$/);
     const encoded = parsed?.[3];
-    if (encoded) {
+    if (encoded !== undefined) {
       try {
         const decoded = decodeURIComponent(encoded);
         const sanitized = sanitizeFilename(decoded, "");

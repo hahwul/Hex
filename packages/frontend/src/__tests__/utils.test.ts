@@ -2,16 +2,16 @@ import { describe, expect, it } from "vitest";
 
 import {
   asciiToHex,
-  ensureCRLF,
-  hexToAscii,
-  parseHttpRaw,
   detectFileSignature,
-  formatBytes,
-  findHttpBodyOffset,
   encodeUtf8WithLimit,
-  utf8CutIndex,
-  sanitizeFilename,
+  ensureCRLF,
+  findHttpBodyOffset,
+  formatBytes,
+  hexToAscii,
   parseContentDispositionFilename,
+  parseHttpRaw,
+  sanitizeFilename,
+  utf8CutIndex,
 } from "../utils";
 
 describe("utils", () => {
@@ -249,7 +249,9 @@ describe("utils", () => {
 
   describe("detectFileSignature", () => {
     it("should detect PNG signature", () => {
-      const data = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      const data = new Uint8Array([
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+      ]);
       expect(detectFileSignature(data)).toBe("PNG");
     });
 
@@ -300,13 +302,17 @@ describe("utils", () => {
 
     it("should detect WebP signature", () => {
       // RIFF....WEBP
-      const data = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50]);
+      const data = new Uint8Array([
+        0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50,
+      ]);
       expect(detectFileSignature(data)).toBe("WebP");
     });
 
     it("should not detect WebP for non-WebP RIFF", () => {
       // RIFF....WAVE (not WebP)
-      const data = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x41, 0x56, 0x45]);
+      const data = new Uint8Array([
+        0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x41, 0x56, 0x45,
+      ]);
       expect(detectFileSignature(data)).not.toBe("WebP");
     });
 
@@ -378,8 +384,8 @@ describe("utils", () => {
 
     it("should detect SQLite signature", () => {
       const data = new Uint8Array([
-        0x53, 0x51, 0x4c, 0x69, 0x74, 0x65, 0x20, 0x66,
-        0x6f, 0x72, 0x6d, 0x61, 0x74, 0x20, 0x33, 0x00,
+        0x53, 0x51, 0x4c, 0x69, 0x74, 0x65, 0x20, 0x66, 0x6f, 0x72, 0x6d, 0x61,
+        0x74, 0x20, 0x33, 0x00,
       ]);
       expect(detectFileSignature(data)).toBe("SQLite");
     });
@@ -401,7 +407,9 @@ describe("utils", () => {
 
     it("should not detect WebP when buffer is shorter than 12 bytes", () => {
       // Starts with RIFF but truncated before WEBP marker
-      const data = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00]);
+      const data = new Uint8Array([
+        0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00,
+      ]);
       expect(detectFileSignature(data)).toBeNull();
     });
   });
@@ -423,7 +431,9 @@ describe("utils", () => {
     });
 
     it("should format as Python bytes", () => {
-      expect(formatBytes(hello, "python-bytes")).toBe("b'\\x48\\x65\\x6c\\x6c\\x6f'");
+      expect(formatBytes(hello, "python-bytes")).toBe(
+        "b'\\x48\\x65\\x6c\\x6c\\x6f'",
+      );
     });
 
     it("should format as JSON array", () => {
@@ -438,7 +448,9 @@ describe("utils", () => {
     });
 
     it("should format hexdump with custom bytes per row", () => {
-      const data = new Uint8Array([0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48]);
+      const data = new Uint8Array([
+        0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48,
+      ]);
       const result = formatBytes(data, "hexdump", 4);
       const lines = result.split("\n");
       expect(lines.length).toBe(2);
@@ -582,8 +594,9 @@ describe("utils", () => {
 
   describe("parseContentDispositionFilename", () => {
     it("parses a plain filename= value", () => {
-      expect(parseContentDispositionFilename("attachment; filename=report.csv"))
-        .toBe("report.csv");
+      expect(
+        parseContentDispositionFilename("attachment; filename=report.csv"),
+      ).toBe("report.csv");
     });
 
     it("parses a quoted filename= value", () => {

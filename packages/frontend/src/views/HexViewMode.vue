@@ -4,19 +4,28 @@
  * Displays HTTP requests/responses in hexadecimal format with editing capabilities
  * Ensures proper CRLF line endings for HTTP protocol compliance
  */
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import {
-  hexToAscii,
+  computed,
+  nextTick,
+  onMounted,
+  onUnmounted,
+  reactive,
+  ref,
+  watch,
+} from "vue";
+
+import {
   asciiToHex,
-  hexPairs,
-  parseHttpRaw,
-  ensureCRLF,
   detectFileSignature,
-  formatBytes,
+  ensureCRLF,
   findHttpBodyOffset,
-  utf8CutIndex,
+  formatBytes,
+  hexPairs,
+  hexToAscii,
   parseContentDispositionFilename,
+  parseHttpRaw,
   sanitizeFilename,
+  utf8CutIndex,
 } from "../utils";
 import type { CopyFormat } from "../utils";
 
@@ -78,9 +87,9 @@ let lastClickInside = true;
 
 const shouldHandleShortcut = (): boolean => {
   // Caido keeps pages alive: a pane on a hidden page is detached but mounted.
-  if (!rootRef.value?.isConnected) return false;
+  if (rootRef.value?.isConnected !== true) return false;
   const active = document.activeElement;
-  if (active && rootRef.value?.contains(active)) return true;
+  if (active && rootRef.value?.contains(active) === true) return true;
   if (!lastClickInside) return false;
   if (!active || active === document.body) return true;
   const tag = active.tagName;
@@ -129,10 +138,14 @@ const totalRows = computed(() => dumpLines.value.length);
 const totalHeight = computed(() => totalRows.value * ROW_HEIGHT);
 
 const visibleRange = computed(() => {
-  const start = Math.max(0, Math.floor(scrollTop.value / ROW_HEIGHT) - OVERSCAN);
+  const start = Math.max(
+    0,
+    Math.floor(scrollTop.value / ROW_HEIGHT) - OVERSCAN,
+  );
   const end = Math.min(
     totalRows.value,
-    Math.ceil((scrollTop.value + containerHeight.value) / ROW_HEIGHT) + OVERSCAN,
+    Math.ceil((scrollTop.value + containerHeight.value) / ROW_HEIGHT) +
+      OVERSCAN,
   );
   return { start, end };
 });
@@ -173,16 +186,44 @@ onUnmounted(() => {
   resizeObserver?.disconnect();
 });
 
+// The parts of what Caido hands a view mode that this component uses.
+type Message = { raw?: string; path?: string; [key: string]: unknown };
+type EditorViewLike = {
+  state: {
+    doc: { toString: () => string; length: number };
+    sliceDoc?: () => string;
+  };
+  dispatch: (transaction: {
+    changes: { from: number; to: number; insert: string };
+  }) => void;
+};
+type ToastVariant = "success" | "error" | "warning" | "info";
+
 const props = defineProps<{
-  sdk: any;
-  request?: any;
-  response?: any;
+  sdk: {
+    window?: {
+      showToast?: (
+        message: string,
+        options?: { variant?: ToastVariant },
+      ) => void;
+      getActiveEditor?: () =>
+        | { getEditorView: () => EditorViewLike | undefined }
+        | undefined;
+    };
+  };
+  request?: Message;
+  response?: Message;
   // Writable (Replay) request panes only: the live editor text. `request`
   // stays undefined there until the draft has been sent once.
-  draft?: any;
+  draft?: Message;
   // The pane's own CodeMirror view (newer Caido only).
-  view?: any;
+  view?: EditorViewLike;
 }>();
+
+const present = <T,>(value: T | null | undefined): value is T =>
+  value !== undefined && value !== null;
+const firstNonEmpty = (...values: (string | undefined)[]): string =>
+  values.find((value) => value !== undefined && value !== "") ?? "";
 
 // Modal state
 const modalState = reactive({
@@ -313,7 +354,10 @@ const isCurrentMatch = (globalByteOffset: number): boolean => {
   if (searchState.currentMatchIndex < 0) return false;
   const m = searchState.matches[searchState.currentMatchIndex];
   if (!m) return false;
-  return globalByteOffset >= m.byteOffset && globalByteOffset < m.byteOffset + m.length;
+  return (
+    globalByteOffset >= m.byteOffset &&
+    globalByteOffset < m.byteOffset + m.length
+  );
 };
 
 // Toggle search bar
@@ -413,7 +457,8 @@ const selectionState = reactive({
 });
 
 const selectedBytes = computed((): Uint8Array => {
-  if (selectionState.start < 0 || selectionState.end < 0) return new Uint8Array();
+  if (selectionState.start < 0 || selectionState.end < 0)
+    return new Uint8Array();
   const s = Math.min(selectionState.start, selectionState.end);
   const e = Math.max(selectionState.start, selectionState.end);
   if (s >= rawData.value.length) return new Uint8Array();
@@ -513,7 +558,9 @@ const dataInterpretation = computed(() => {
 const showStructureHighlight = ref(false);
 
 // Find the header/body boundary offset in rawData
-const httpBodyOffset = computed((): number => findHttpBodyOffset(rawData.value));
+const httpBodyOffset = computed((): number =>
+  findHttpBodyOffset(rawData.value),
+);
 
 const getStructureClass = (globalOffset: number): string => {
   if (!showStructureHighlight.value || httpBodyOffset.value < 0) return "";
@@ -549,7 +596,9 @@ const copyAs = async (format: CopyFormat) => {
       : 0;
     const text = formatBytes(bytes, format, bytesPerRow.value, base);
     await navigator.clipboard.writeText(text);
-    props.sdk.window?.showToast?.("Copied to clipboard", { variant: "success" });
+    props.sdk.window?.showToast?.("Copied to clipboard", {
+      variant: "success",
+    });
   } catch {
     props.sdk.window?.showToast?.("Failed to copy", { variant: "error" });
   }
@@ -576,16 +625,16 @@ const suggestExportFilename = (): string => {
     const disposition = Object.entries(parsedHttp.value.headers).find(
       ([name]) => name.toLowerCase() === "content-disposition",
     )?.[1];
-    if (disposition) {
+    if (disposition !== undefined && disposition !== "") {
       const parsed = parseContentDispositionFilename(disposition);
-      if (parsed) return parsed;
+      if (parsed !== null) return parsed;
     }
   }
 
-  const path: string = props.request?.path || props.draft?.path || "";
+  const path = firstNonEmpty(props.request?.path, props.draft?.path);
   if (path) {
     const lastSegment = path.split("/").filter(Boolean).pop();
-    if (lastSegment) {
+    if (lastSegment !== undefined) {
       // Drop query/fragment before sanitizing.
       const candidate = lastSegment.split(/[?#]/)[0] ?? "";
       if (candidate.includes(".")) {
@@ -595,13 +644,20 @@ const suggestExportFilename = (): string => {
     }
   }
 
-  if (detectedSignature.value) {
+  if (detectedSignature.value !== null) {
     const extMap: Record<string, string> = {
-      PNG: "png", JPEG: "jpg", GIF87a: "gif", GIF89a: "gif",
-      WebP: "webp", BMP: "bmp", PDF: "pdf", ZIP: "zip", GZIP: "gz",
+      PNG: "png",
+      JPEG: "jpg",
+      GIF87a: "gif",
+      GIF89a: "gif",
+      WebP: "webp",
+      BMP: "bmp",
+      PDF: "pdf",
+      ZIP: "zip",
+      GZIP: "gz",
     };
     const ext = extMap[detectedSignature.value];
-    if (ext) return `export.${ext}`;
+    if (ext !== undefined) return `export.${ext}`;
   }
 
   return fallback;
@@ -642,17 +698,19 @@ const raw = computed(() => {
   if (!isEditable.value) {
     // Captured messages are shown verbatim: a body LF (e.g. in an uploaded
     // file) is a real 0a byte, not a line ending to rewrite.
-    return props.request?.raw || props.response?.raw || "";
+    return firstNonEmpty(props.request?.raw, props.response?.raw);
   }
   // The draft is this pane's exact text and updates with it, while the active
   // editor can be another pane's (or nothing at all).
-  if (props.draft) return props.draft.raw ?? "";
+  if (present(props.draft)) return props.draft.raw ?? "";
   // Hosts without a draft: doc.toString() joins lines with LF, so restore CRLF.
   return ensureCRLF(replayEditorView.value?.state.doc.toString() ?? "");
 });
 
 // Determine if it's a request or response
-const isRequest = computed(() => !!props.request || !!props.draft);
+const isRequest = computed(
+  () => present(props.request) || present(props.draft),
+);
 
 // Determine if it's in Replay tab (where editing is allowed)
 const isReplayTab = computed(() => window.location.hash.includes("/replay"));
@@ -672,7 +730,7 @@ const replayEditorView = computed(() =>
 
 // Exact editor text; doc.toString() would join lines with LF whatever the
 // editor's line separator is.
-const editorText = (view: any): string =>
+const editorText = (view: EditorViewLike): string =>
   view.state.sliceDoc?.() ?? view.state.doc.toString();
 
 // Editor that Save writes to. Without `view`, the active editor is only the
@@ -682,9 +740,10 @@ const editorText = (view: any): string =>
 // Save does not strand the edit.
 let knownEditorView = mountedEditorView;
 const saveTarget = () => {
-  if (props.view || !props.draft) return replayEditorView.value;
+  const draft = props.draft;
+  if (present(props.view) || !present(draft)) return replayEditorView.value;
   const found = [knownEditorView, activeEditorView()].find(
-    (view) => view && editorText(view) === props.draft.raw,
+    (view) => present(view) && editorText(view) === draft.raw,
   );
   if (found) knownEditorView = found;
   return found;
@@ -702,7 +761,7 @@ const openEditModal = (line: {
 }) => {
   if (!isEditable.value) return;
   // Don't accept edits that Save would then have nowhere to write.
-  if (props.draft && !saveTarget()) {
+  if (present(props.draft) && !saveTarget()) {
     props.sdk.window?.showToast?.(NO_EDITOR_HINT, { variant: "warning" });
     return;
   }
@@ -715,11 +774,13 @@ const openEditModal = (line: {
   modalState.showModal = true;
 };
 
-
 // Update hex when ASCII changes
 const updateHexFromAscii = () => {
   // Map "." against the current hex so earlier hex-box edits survive.
-  modalState.currentHex = asciiToHex(modalState.currentAscii, modalState.currentHex);
+  modalState.currentHex = asciiToHex(
+    modalState.currentAscii,
+    modalState.currentHex,
+  );
 };
 
 // Update ASCII when hex changes
@@ -731,10 +792,9 @@ const updateAsciiFromHex = () => {
 const applyEdit = () => {
   const hex = modalState.currentHex.replace(/\s+/g, "");
   if (!/^(?:[0-9a-fA-F]{2})*$/.test(hex)) {
-    props.sdk.window?.showToast?.(
-      "Invalid hex: use byte pairs (e.g. 48 65)",
-      { variant: "error" },
-    );
+    props.sdk.window?.showToast?.("Invalid hex: use byte pairs (e.g. 48 65)", {
+      variant: "error",
+    });
     return;
   }
   const bytes = (hex.match(/../g) ?? []).map((h) => parseInt(h, 16));
@@ -754,7 +814,6 @@ const applyEdit = () => {
 const cancelEdit = () => {
   modalState.showModal = false;
 };
-
 
 const parsedHttp = computed(() => {
   try {
@@ -892,8 +951,8 @@ const hexDiff = computed(() => {
   }> = [];
 
   for (let i = 0; i < maxLength; i++) {
-    const orig = original[i] || "";
-    const curr = current[i] || "";
+    const orig = original[i] ?? "";
+    const curr = current[i] ?? "";
     diff.push({
       index: i,
       original: orig,
@@ -908,7 +967,7 @@ const hexDiff = computed(() => {
 // Edit mode is now controlled by double-click
 
 // Save changes (for Replay tab only)
-const saveChanges = async () => {
+const saveChanges = () => {
   if (!isRequest.value) return; // Only for requests
   if (!isReplayTab.value) return; // Only in Replay tab
 
@@ -921,13 +980,15 @@ const saveChanges = async () => {
     }).decode(fullBytes());
     // Read back through doc.toString() (hosts without a draft), a lone CR or
     // LF would come back as a CRLF line break.
-    if (!props.draft && /\r(?!\n)|(?<!\r)\n/.test(newRaw)) {
+    if (!present(props.draft) && /\r(?!\n)|(?<!\r)\n/.test(newRaw)) {
       throw new Error("lone CR/LF bytes cannot be kept by the request editor");
     }
 
     const editorView = saveTarget();
     if (!editorView) {
-      throw new Error(props.draft ? NO_EDITOR_HINT : "No active editor");
+      throw new Error(
+        present(props.draft) ? NO_EDITOR_HINT : "No active editor",
+      );
     }
 
     // Replace the entire editor content with the modified raw data
@@ -972,7 +1033,8 @@ const saveChanges = async () => {
             v-if="detectedSignature"
             class="text-xs bg-green-600 text-green-100 px-2 py-0.5 rounded"
             :title="'Detected file signature: ' + detectedSignature"
-          >{{ detectedSignature }}</span>
+            >{{ detectedSignature }}</span
+          >
         </div>
         <div class="flex gap-1">
           <button
@@ -1011,12 +1073,42 @@ const saveChanges = async () => {
               v-if="showCopyMenu"
               class="absolute right-0 top-full mt-1 bg-surface-800 border border-surface-600 rounded shadow-lg z-10 min-w-[180px]"
             >
-              <button class="w-full text-left px-3 py-1.5 text-xs text-surface-300 hover:bg-surface-700" @click="copyAs('raw-hex')">Raw hex</button>
-              <button class="w-full text-left px-3 py-1.5 text-xs text-surface-300 hover:bg-surface-700" @click="copyAs('spaced-hex')">Spaced hex</button>
-              <button class="w-full text-left px-3 py-1.5 text-xs text-surface-300 hover:bg-surface-700" @click="copyAs('c-array')">C array (\x...)</button>
-              <button class="w-full text-left px-3 py-1.5 text-xs text-surface-300 hover:bg-surface-700" @click="copyAs('python-bytes')">Python bytes</button>
-              <button class="w-full text-left px-3 py-1.5 text-xs text-surface-300 hover:bg-surface-700" @click="copyAs('json-array')">JSON array</button>
-              <button class="w-full text-left px-3 py-1.5 text-xs text-surface-300 hover:bg-surface-700" @click="copyAs('hexdump')">Hexdump</button>
+              <button
+                class="w-full text-left px-3 py-1.5 text-xs text-surface-300 hover:bg-surface-700"
+                @click="copyAs('raw-hex')"
+              >
+                Raw hex
+              </button>
+              <button
+                class="w-full text-left px-3 py-1.5 text-xs text-surface-300 hover:bg-surface-700"
+                @click="copyAs('spaced-hex')"
+              >
+                Spaced hex
+              </button>
+              <button
+                class="w-full text-left px-3 py-1.5 text-xs text-surface-300 hover:bg-surface-700"
+                @click="copyAs('c-array')"
+              >
+                C array (\x...)
+              </button>
+              <button
+                class="w-full text-left px-3 py-1.5 text-xs text-surface-300 hover:bg-surface-700"
+                @click="copyAs('python-bytes')"
+              >
+                Python bytes
+              </button>
+              <button
+                class="w-full text-left px-3 py-1.5 text-xs text-surface-300 hover:bg-surface-700"
+                @click="copyAs('json-array')"
+              >
+                JSON array
+              </button>
+              <button
+                class="w-full text-left px-3 py-1.5 text-xs text-surface-300 hover:bg-surface-700"
+                @click="copyAs('hexdump')"
+              >
+                Hexdump
+              </button>
             </div>
           </div>
           <select
@@ -1024,21 +1116,35 @@ const saveChanges = async () => {
             class="bg-surface-700 text-surface-300 text-xs rounded px-1 py-0.5 border border-surface-600 outline-none"
             title="Max data size"
           >
-            <option v-for="opt in MAX_SIZE_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            <option
+              v-for="opt in MAX_SIZE_OPTIONS"
+              :key="opt.value"
+              :value="opt.value"
+            >
+              {{ opt.label }}
+            </option>
           </select>
           <select
             v-model.number="bytesPerRow"
             class="bg-surface-700 text-surface-300 text-xs rounded px-1 py-0.5 border border-surface-600 outline-none"
             title="Bytes per line"
           >
-            <option v-for="opt in BYTES_PER_ROW_OPTIONS" :key="opt" :value="opt">{{ opt }}B/line</option>
+            <option
+              v-for="opt in BYTES_PER_ROW_OPTIONS"
+              :key="opt"
+              :value="opt"
+            >
+              {{ opt }}B/line
+            </option>
           </select>
           <select
             v-model.number="byteGrouping"
             class="bg-surface-700 text-surface-300 text-xs rounded px-1 py-0.5 border border-surface-600 outline-none"
             title="Byte grouping"
           >
-            <option v-for="opt in BYTE_GROUP_OPTIONS" :key="opt" :value="opt">{{ opt === 1 ? '1 byte' : opt + ' bytes' }}</option>
+            <option v-for="opt in BYTE_GROUP_OPTIONS" :key="opt" :value="opt">
+              {{ opt === 1 ? "1 byte" : opt + " bytes" }}
+            </option>
           </select>
           <button
             class="px-3 py-1 text-xs rounded hover:bg-surface-700 text-surface-300"
@@ -1071,7 +1177,10 @@ const saveChanges = async () => {
                 ? 'bg-primary-600 text-primary-100'
                 : 'bg-surface-700 text-surface-300 hover:bg-surface-600',
             ]"
-            @click="searchState.mode = 'hex'; onSearchInput()"
+            @click="
+              searchState.mode = 'hex';
+              onSearchInput();
+            "
           >
             HEX
           </button>
@@ -1082,7 +1191,10 @@ const saveChanges = async () => {
                 ? 'bg-primary-600 text-primary-100'
                 : 'bg-surface-700 text-surface-300 hover:bg-surface-600',
             ]"
-            @click="searchState.mode = 'ascii'; onSearchInput()"
+            @click="
+              searchState.mode = 'ascii';
+              onSearchInput();
+            "
           >
             ASCII
           </button>
@@ -1102,11 +1214,11 @@ const saveChanges = async () => {
         <div class="flex items-center gap-1">
           <span class="text-xs text-surface-400 min-w-[60px] text-center">
             <template v-if="searchState.matches.length > 0">
-              {{ searchState.currentMatchIndex + 1 }}/{{ searchState.matches.length }}
+              {{ searchState.currentMatchIndex + 1 }}/{{
+                searchState.matches.length
+              }}
             </template>
-            <template v-else-if="effectiveQuery">
-              No match
-            </template>
+            <template v-else-if="effectiveQuery"> No match </template>
           </span>
           <button
             class="px-2 py-0.5 text-xs rounded hover:bg-surface-600 text-surface-300 disabled:opacity-30"
@@ -1154,10 +1266,7 @@ const saveChanges = async () => {
         >
           Go
         </button>
-        <span
-          v-if="gotoState.error"
-          class="text-xs text-red-400"
-        >
+        <span v-if="gotoState.error" class="text-xs text-red-400">
           Invalid offset
         </span>
         <button
@@ -1180,7 +1289,11 @@ const saveChanges = async () => {
           <div :style="{ height: totalHeight + 'px', position: 'relative' }">
             <table
               class="w-full text-xs font-mono bg-surface-900"
-              :style="{ position: 'absolute', top: (visibleRange.start * ROW_HEIGHT) + 'px', width: '100%' }"
+              :style="{
+                position: 'absolute',
+                top: visibleRange.start * ROW_HEIGHT + 'px',
+                width: '100%',
+              }"
             >
               <tbody>
                 <tr
@@ -1192,69 +1305,133 @@ const saveChanges = async () => {
                     getStructureClass(line._index * bytesPerRow),
                   ]"
                   :style="{ height: ROW_HEIGHT + 'px' }"
-              >
-                <td
-                  class="px-2 py-1 text-surface-400 border-r border-surface-600 relative"
-                  :style="{
-                    width: columnWidths.offset + 'px',
-                  }"
                 >
-                  {{ line.offset }}
-                  <div
-                    class="absolute right-0 top-0 bottom-0 w-1 bg-surface-600 cursor-col-resize"
-                    @mousedown="startResize('offset', $event)"
-                  ></div>
-                </td>
-                <td
-                  class="px-2 py-1 border-r border-surface-600 relative"
-                  :style="{ width: columnWidths.hex + 'px' }"
-                  @dblclick="openEditModal(line._ref)"
-                >
-                  <span class="font-mono whitespace-pre" :class="isEditable ? 'cursor-pointer' : 'cursor-default'">
-                    <template v-for="(byte, bIdx) in line.hex.split(' ')" :key="bIdx">
-                      <span v-if="bIdx > 0">{{ bIdx % byteGrouping === 0 ? ' ' : '' }}</span>
-                      <span
-                        :class="{
-                          'bg-yellow-500/30 text-yellow-200': isHighlighted(line._index * bytesPerRow + bIdx) && !isCurrentMatch(line._index * bytesPerRow + bIdx),
-                          'bg-orange-500/50 text-orange-100': isCurrentMatch(line._index * bytesPerRow + bIdx),
-                          'bg-cyan-500/50 text-cyan-100 ring-1 ring-cyan-400': isGotoHighlighted(line._index * bytesPerRow + bIdx),
-                          'bg-blue-500/40 text-blue-100': isSelected(line._index * bytesPerRow + bIdx) && !isHighlighted(line._index * bytesPerRow + bIdx) && !isCurrentMatch(line._index * bytesPerRow + bIdx) && !isGotoHighlighted(line._index * bytesPerRow + bIdx),
-                        }"
-                        class="cursor-pointer"
-                        @click.stop="onByteClick(line._index * bytesPerRow + bIdx, $event)"
-                      >{{ byte }}</span>
-                    </template>
-                  </span>
-                  <div
-                    class="absolute right-0 top-0 bottom-0 w-1 bg-surface-600 cursor-col-resize"
-                    @mousedown="startResize('hex', $event)"
-                  ></div>
-                </td>
-                <td
-                  class="px-2 py-1"
-                  :style="{
-                    width: columnWidths.ascii + 'px',
-                  }"
-                >
-                  <span class="font-mono">
-                    <template v-for="(char, cIdx) in line.ascii.split('')" :key="cIdx">
-                      <span
-                        :class="{
-                          'text-surface-300': !isHighlighted(line._index * bytesPerRow + cIdx) && !isGotoHighlighted(line._index * bytesPerRow + cIdx) && !isSelected(line._index * bytesPerRow + cIdx),
-                          'bg-yellow-500/30 text-yellow-200': isHighlighted(line._index * bytesPerRow + cIdx) && !isCurrentMatch(line._index * bytesPerRow + cIdx),
-                          'bg-orange-500/50 text-orange-100': isCurrentMatch(line._index * bytesPerRow + cIdx),
-                          'bg-cyan-500/50 text-cyan-100 ring-1 ring-cyan-400': isGotoHighlighted(line._index * bytesPerRow + cIdx),
-                          'bg-blue-500/40 text-blue-100': isSelected(line._index * bytesPerRow + cIdx) && !isHighlighted(line._index * bytesPerRow + cIdx) && !isCurrentMatch(line._index * bytesPerRow + cIdx) && !isGotoHighlighted(line._index * bytesPerRow + cIdx),
-                        }"
-                        class="cursor-pointer"
-                        @click.stop="onByteClick(line._index * bytesPerRow + cIdx, $event)"
-                      >{{ char }}</span>
-                    </template>
-                  </span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+                  <td
+                    class="px-2 py-1 text-surface-400 border-r border-surface-600 relative"
+                    :style="{
+                      width: columnWidths.offset + 'px',
+                    }"
+                  >
+                    {{ line.offset }}
+                    <div
+                      class="absolute right-0 top-0 bottom-0 w-1 bg-surface-600 cursor-col-resize"
+                      @mousedown="startResize('offset', $event)"
+                    ></div>
+                  </td>
+                  <td
+                    class="px-2 py-1 border-r border-surface-600 relative"
+                    :style="{ width: columnWidths.hex + 'px' }"
+                    @dblclick="openEditModal(line._ref)"
+                  >
+                    <span
+                      class="font-mono whitespace-pre"
+                      :class="isEditable ? 'cursor-pointer' : 'cursor-default'"
+                    >
+                      <template
+                        v-for="(byte, bIdx) in line.hex.split(' ')"
+                        :key="bIdx"
+                      >
+                        <span v-if="bIdx > 0">{{
+                          bIdx % byteGrouping === 0 ? " " : ""
+                        }}</span>
+                        <span
+                          :class="{
+                            'bg-yellow-500/30 text-yellow-200':
+                              isHighlighted(line._index * bytesPerRow + bIdx) &&
+                              !isCurrentMatch(line._index * bytesPerRow + bIdx),
+                            'bg-orange-500/50 text-orange-100': isCurrentMatch(
+                              line._index * bytesPerRow + bIdx,
+                            ),
+                            'bg-cyan-500/50 text-cyan-100 ring-1 ring-cyan-400':
+                              isGotoHighlighted(
+                                line._index * bytesPerRow + bIdx,
+                              ),
+                            'bg-blue-500/40 text-blue-100':
+                              isSelected(line._index * bytesPerRow + bIdx) &&
+                              !isHighlighted(
+                                line._index * bytesPerRow + bIdx,
+                              ) &&
+                              !isCurrentMatch(
+                                line._index * bytesPerRow + bIdx,
+                              ) &&
+                              !isGotoHighlighted(
+                                line._index * bytesPerRow + bIdx,
+                              ),
+                          }"
+                          class="cursor-pointer"
+                          @click.stop="
+                            onByteClick(
+                              line._index * bytesPerRow + bIdx,
+                              $event,
+                            )
+                          "
+                          >{{ byte }}</span
+                        >
+                      </template>
+                    </span>
+                    <div
+                      class="absolute right-0 top-0 bottom-0 w-1 bg-surface-600 cursor-col-resize"
+                      @mousedown="startResize('hex', $event)"
+                    ></div>
+                  </td>
+                  <td
+                    class="px-2 py-1"
+                    :style="{
+                      width: columnWidths.ascii + 'px',
+                    }"
+                  >
+                    <span class="font-mono">
+                      <template
+                        v-for="(char, cIdx) in line.ascii.split('')"
+                        :key="cIdx"
+                      >
+                        <span
+                          :class="{
+                            'text-surface-300':
+                              !isHighlighted(
+                                line._index * bytesPerRow + cIdx,
+                              ) &&
+                              !isGotoHighlighted(
+                                line._index * bytesPerRow + cIdx,
+                              ) &&
+                              !isSelected(line._index * bytesPerRow + cIdx),
+                            'bg-yellow-500/30 text-yellow-200':
+                              isHighlighted(line._index * bytesPerRow + cIdx) &&
+                              !isCurrentMatch(line._index * bytesPerRow + cIdx),
+                            'bg-orange-500/50 text-orange-100': isCurrentMatch(
+                              line._index * bytesPerRow + cIdx,
+                            ),
+                            'bg-cyan-500/50 text-cyan-100 ring-1 ring-cyan-400':
+                              isGotoHighlighted(
+                                line._index * bytesPerRow + cIdx,
+                              ),
+                            'bg-blue-500/40 text-blue-100':
+                              isSelected(line._index * bytesPerRow + cIdx) &&
+                              !isHighlighted(
+                                line._index * bytesPerRow + cIdx,
+                              ) &&
+                              !isCurrentMatch(
+                                line._index * bytesPerRow + cIdx,
+                              ) &&
+                              !isGotoHighlighted(
+                                line._index * bytesPerRow + cIdx,
+                              ),
+                          }"
+                          class="cursor-pointer"
+                          @click.stop="
+                            onByteClick(
+                              line._index * bytesPerRow + cIdx,
+                              $event,
+                            )
+                          "
+                          >{{ char }}</span
+                        >
+                      </template>
+                    </span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
@@ -1266,8 +1443,12 @@ const saveChanges = async () => {
       >
         <div class="flex items-center justify-between mb-1">
           <span class="text-xs text-surface-400 font-medium">
-            Data Inspector — {{ selectedBytes.length }} byte(s) selected
-            (offset {{ Math.min(selectionState.start, selectionState.end).toString(16).padStart(8, "0") }})
+            Data Inspector — {{ selectedBytes.length }} byte(s) selected (offset
+            {{
+              Math.min(selectionState.start, selectionState.end)
+                .toString(16)
+                .padStart(8, "0")
+            }})
           </span>
           <button
             class="text-xs text-surface-500 hover:text-surface-300 px-1"
@@ -1276,10 +1457,18 @@ const saveChanges = async () => {
             <i class="fas fa-times"></i>
           </button>
         </div>
-        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-4 gap-y-0.5 text-xs font-mono">
-          <div v-for="(value, key) in dataInterpretation" :key="key" class="flex justify-between gap-2">
+        <div
+          class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-4 gap-y-0.5 text-xs font-mono"
+        >
+          <div
+            v-for="(value, key) in dataInterpretation"
+            :key="key"
+            class="flex justify-between gap-2"
+          >
             <span class="text-surface-500 whitespace-nowrap">{{ key }}:</span>
-            <span class="text-surface-300 truncate" :title="value">{{ value }}</span>
+            <span class="text-surface-300 truncate" :title="value">{{
+              value
+            }}</span>
           </div>
         </div>
       </div>
@@ -1293,9 +1482,20 @@ const saveChanges = async () => {
             <i class="fas fa-file"></i>
             {{ rawData.length }} bytes
           </span>
-          <span v-if="hasSelection" class="flex items-center gap-1 text-blue-400">
+          <span
+            v-if="hasSelection"
+            class="flex items-center gap-1 text-blue-400"
+          >
             <i class="fas fa-mouse-pointer"></i>
-            {{ Math.min(selectionState.start, selectionState.end).toString(16).padStart(8, "0") }}-{{ Math.max(selectionState.start, selectionState.end).toString(16).padStart(8, "0") }}
+            {{
+              Math.min(selectionState.start, selectionState.end)
+                .toString(16)
+                .padStart(8, "0")
+            }}-{{
+              Math.max(selectionState.start, selectionState.end)
+                .toString(16)
+                .padStart(8, "0")
+            }}
             ({{ selectedBytes.length }} bytes)
           </span>
         </div>
