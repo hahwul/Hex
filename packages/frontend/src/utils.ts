@@ -36,7 +36,8 @@ export const asciiToHex = (ascii: string, originalHex?: string): string => {
   let i = 0;
   for (const char of ascii) {
     const originalByte = originalBytes[i];
-    const original = originalByte ? parseInt(originalByte, 16) : 0x2e;
+    const original =
+      originalByte !== undefined ? parseInt(originalByte, 16) : 0x2e;
     if (char === "." && (original < 32 || original >= 127)) {
       // "." standing in for a non-printable byte: keep that byte. Over a
       // printable byte it is a typed dot.
@@ -73,7 +74,7 @@ export const parseHttpRaw = (raw: string) => {
   const headers: Record<string, string> = {};
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i];
-    if (!line) continue;
+    if (line === undefined || line === "") continue;
     const colonIndex = line.indexOf(":");
     if (colonIndex > 0) {
       const name = line.substring(0, colonIndex).trim();
@@ -140,7 +141,7 @@ export const detectFileSignature = (data: Uint8Array): string | null => {
   if (data.length === 0) return null;
 
   for (const sig of FILE_SIGNATURES) {
-    const offset = sig.offset || 0;
+    const offset = sig.offset ?? 0;
     if (data.length < offset + sig.bytes.length) continue;
 
     let match = true;
@@ -307,6 +308,7 @@ export const sanitizeFilename = (
 ): string => {
   // Drop CR/LF and other control chars, then strip path separators.
   let cleaned = input
+    // eslint-disable-next-line no-control-regex -- stripping them is the point
     .replace(/[\x00-\x1f\x7f]/g, "")
     .replace(/[\\/]/g, "_")
     .trim();
@@ -330,11 +332,11 @@ export const parseContentDispositionFilename = (
   // RFC 5987: filename*=<charset>'<lang>'<percent-encoded>
   // Language tag is optional but the single-quote separators are not.
   const extMatch = header.match(/filename\*\s*=\s*([^;]+)/i);
-  if (extMatch?.[1]) {
+  if (extMatch?.[1] !== undefined) {
     const value = extMatch[1].trim();
     const parsed = value.match(/^([^']*)'([^']*)'(.+)$/);
     const encoded = parsed?.[3];
-    if (encoded) {
+    if (encoded !== undefined) {
       try {
         const decoded = decodeURIComponent(encoded);
         const sanitized = sanitizeFilename(decoded, "");

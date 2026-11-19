@@ -87,9 +87,9 @@ let lastClickInside = true;
 
 const shouldHandleShortcut = (): boolean => {
   // Caido keeps pages alive: a pane on a hidden page is detached but mounted.
-  if (!rootRef.value?.isConnected) return false;
+  if (rootRef.value?.isConnected !== true) return false;
   const active = document.activeElement;
-  if (active && rootRef.value?.contains(active)) return true;
+  if (active && rootRef.value?.contains(active) === true) return true;
   if (!lastClickInside) return false;
   if (!active || active === document.body) return true;
   const tag = active.tagName;
@@ -186,16 +186,44 @@ onUnmounted(() => {
   resizeObserver?.disconnect();
 });
 
+// The parts of what Caido hands a view mode that this component uses.
+type Message = { raw?: string; path?: string; [key: string]: unknown };
+type EditorViewLike = {
+  state: {
+    doc: { toString: () => string; length: number };
+    sliceDoc?: () => string;
+  };
+  dispatch: (transaction: {
+    changes: { from: number; to: number; insert: string };
+  }) => void;
+};
+type ToastVariant = "success" | "error" | "warning" | "info";
+
 const props = defineProps<{
-  sdk: any;
-  request?: any;
-  response?: any;
+  sdk: {
+    window?: {
+      showToast?: (
+        message: string,
+        options?: { variant?: ToastVariant },
+      ) => void;
+      getActiveEditor?: () =>
+        | { getEditorView: () => EditorViewLike | undefined }
+        | undefined;
+    };
+  };
+  request?: Message;
+  response?: Message;
   // Writable (Replay) request panes only: the live editor text. `request`
   // stays undefined there until the draft has been sent once.
-  draft?: any;
+  draft?: Message;
   // The pane's own CodeMirror view (newer Caido only).
-  view?: any;
+  view?: EditorViewLike;
 }>();
+
+const present = <T,>(value: T | null | undefined): value is T =>
+  value !== undefined && value !== null;
+const firstNonEmpty = (...values: (string | undefined)[]): string =>
+  values.find((value) => value !== undefined && value !== "") ?? "";
 
 // Modal state
 const modalState = reactive({
@@ -597,16 +625,16 @@ const suggestExportFilename = (): string => {
     const disposition = Object.entries(parsedHttp.value.headers).find(
       ([name]) => name.toLowerCase() === "content-disposition",
     )?.[1];
-    if (disposition) {
+    if (disposition !== undefined && disposition !== "") {
       const parsed = parseContentDispositionFilename(disposition);
-      if (parsed) return parsed;
+      if (parsed !== null) return parsed;
     }
   }
 
-  const path: string = props.request?.path || props.draft?.path || "";
+  const path = firstNonEmpty(props.request?.path, props.draft?.path);
   if (path) {
     const lastSegment = path.split("/").filter(Boolean).pop();
-    if (lastSegment) {
+    if (lastSegment !== undefined) {
       // Drop query/fragment before sanitizing.
       const candidate = lastSegment.split(/[?#]/)[0] ?? "";
       if (candidate.includes(".")) {
@@ -616,7 +644,7 @@ const suggestExportFilename = (): string => {
     }
   }
 
-  if (detectedSignature.value) {
+  if (detectedSignature.value !== null) {
     const extMap: Record<string, string> = {
       PNG: "png",
       JPEG: "jpg",
@@ -629,7 +657,7 @@ const suggestExportFilename = (): string => {
       GZIP: "gz",
     };
     const ext = extMap[detectedSignature.value];
-    if (ext) return `export.${ext}`;
+    if (ext !== undefined) return `export.${ext}`;
   }
 
   return fallback;
@@ -670,17 +698,19 @@ const raw = computed(() => {
   if (!isEditable.value) {
     // Captured messages are shown verbatim: a body LF (e.g. in an uploaded
     // file) is a real 0a byte, not a line ending to rewrite.
-    return props.request?.raw || props.response?.raw || "";
+    return firstNonEmpty(props.request?.raw, props.response?.raw);
   }
   // The draft is this pane's exact text and updates with it, while the active
   // editor can be another pane's (or nothing at all).
-  if (props.draft) return props.draft.raw ?? "";
+  if (present(props.draft)) return props.draft.raw ?? "";
   // Hosts without a draft: doc.toString() joins lines with LF, so restore CRLF.
   return ensureCRLF(replayEditorView.value?.state.doc.toString() ?? "");
 });
 
 // Determine if it's a request or response
-const isRequest = computed(() => !!props.request || !!props.draft);
+const isRequest = computed(
+  () => present(props.request) || present(props.draft),
+);
 
 // Determine if it's in Replay tab (where editing is allowed)
 const isReplayTab = computed(() => window.location.hash.includes("/replay"));
@@ -700,7 +730,7 @@ const replayEditorView = computed(() =>
 
 // Exact editor text; doc.toString() would join lines with LF whatever the
 // editor's line separator is.
-const editorText = (view: any): string =>
+const editorText = (view: EditorViewLike): string =>
   view.state.sliceDoc?.() ?? view.state.doc.toString();
 
 // Editor that Save writes to. Without `view`, the active editor is only the
@@ -710,9 +740,10 @@ const editorText = (view: any): string =>
 // Save does not strand the edit.
 let knownEditorView = mountedEditorView;
 const saveTarget = () => {
-  if (props.view || !props.draft) return replayEditorView.value;
+  const draft = props.draft;
+  if (present(props.view) || !present(draft)) return replayEditorView.value;
   const found = [knownEditorView, activeEditorView()].find(
-    (view) => view && editorText(view) === props.draft.raw,
+    (view) => present(view) && editorText(view) === draft.raw,
   );
   if (found) knownEditorView = found;
   return found;
@@ -730,7 +761,7 @@ const openEditModal = (line: {
 }) => {
   if (!isEditable.value) return;
   // Don't accept edits that Save would then have nowhere to write.
-  if (props.draft && !saveTarget()) {
+  if (present(props.draft) && !saveTarget()) {
     props.sdk.window?.showToast?.(NO_EDITOR_HINT, { variant: "warning" });
     return;
   }
@@ -920,8 +951,8 @@ const hexDiff = computed(() => {
   }> = [];
 
   for (let i = 0; i < maxLength; i++) {
-    const orig = original[i] || "";
-    const curr = current[i] || "";
+    const orig = original[i] ?? "";
+    const curr = current[i] ?? "";
     diff.push({
       index: i,
       original: orig,
@@ -936,7 +967,7 @@ const hexDiff = computed(() => {
 // Edit mode is now controlled by double-click
 
 // Save changes (for Replay tab only)
-const saveChanges = async () => {
+const saveChanges = () => {
   if (!isRequest.value) return; // Only for requests
   if (!isReplayTab.value) return; // Only in Replay tab
 
@@ -949,13 +980,15 @@ const saveChanges = async () => {
     }).decode(fullBytes());
     // Read back through doc.toString() (hosts without a draft), a lone CR or
     // LF would come back as a CRLF line break.
-    if (!props.draft && /\r(?!\n)|(?<!\r)\n/.test(newRaw)) {
+    if (!present(props.draft) && /\r(?!\n)|(?<!\r)\n/.test(newRaw)) {
       throw new Error("lone CR/LF bytes cannot be kept by the request editor");
     }
 
     const editorView = saveTarget();
     if (!editorView) {
-      throw new Error(props.draft ? NO_EDITOR_HINT : "No active editor");
+      throw new Error(
+        present(props.draft) ? NO_EDITOR_HINT : "No active editor",
+      );
     }
 
     // Replace the entire editor content with the modified raw data

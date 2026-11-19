@@ -1,4 +1,16 @@
 import type { Caido } from "@caido/sdk-frontend";
+import type { Component } from "vue";
+
+type ViewModeOptions = {
+  label: string;
+  view: { component: Component };
+  when: (message: { raw?: string } | null | undefined) => boolean;
+};
+
+type ViewModes = {
+  addRequestViewMode: (options: ViewModeOptions) => void;
+  addResponseViewMode: (options: ViewModeOptions) => void;
+};
 
 // Define our frontend SDK type
 export type FrontendSDK = Caido & {
@@ -17,52 +29,8 @@ export type FrontendSDK = Caido & {
       },
     ) => void;
   };
-  httpHistory?: {
-    addRequestViewMode: (options: {
-      label: string;
-      view: { component: any };
-      when: (request: any) => boolean;
-    }) => void;
-    addResponseViewMode: (options: {
-      label: string;
-      view: { component: any };
-      when: (response: any) => boolean;
-    }) => void;
-  };
-  replay?: {
-    addRequestViewMode: (options: {
-      label: string;
-      view: { component: any };
-      when: (request: any) => boolean;
-    }) => void;
-    addResponseViewMode: (options: {
-      label: string;
-      view: { component: any };
-      when: (response: any) => boolean;
-    }) => void;
-  };
-  search?: {
-    addRequestViewMode: (options: {
-      label: string;
-      view: { component: any };
-      when: (request: any) => boolean;
-    }) => void;
-    addResponseViewMode: (options: {
-      label: string;
-      view: { component: any };
-      when: (response: any) => boolean;
-    }) => void;
-  };
-  sitemap?: {
-    addRequestViewMode: (options: {
-      label: string;
-      view: { component: any };
-      when: (request: any) => boolean;
-    }) => void;
-    addResponseViewMode: (options: {
-      label: string;
-      view: { component: any };
-      when: (response: any) => boolean;
-    }) => void;
-  };
+  httpHistory?: ViewModes;
+  replay?: ViewModes;
+  search?: ViewModes;
+  sitemap?: ViewModes;
 };
