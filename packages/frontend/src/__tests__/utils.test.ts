@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   asciiToHex,
+  bytesToEditorText,
+  capturedRawToBytes,
   detectFileSignature,
+  editorTextToBytes,
   encodeUtf8WithLimit,
   ensureCRLF,
   findHttpBodyOffset,
@@ -659,6 +662,109 @@ describe("utils", () => {
 
     it("never backs off more than 3 bytes on invalid UTF-8", () => {
       expect(utf8CutIndex(new Uint8Array(10).fill(0x80), 6)).toBe(3);
+    });
+  });
+
+  describe("Caido's bytes <-> text codec", () => {
+    // Caido's own codec (Caido 0.56 frontend): bytes -> string is UTF-8 when
+    // valid, else one character per byte; string -> bytes (Replay send) is
+    // one byte per code point up to U+00FF, UTF-8 above.
+    const caidoDecode = (bytes: Uint8Array): string => {
+      try {
+        return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      } catch {
+        return Array.from(bytes, (b) => String.fromCharCode(b)).join("");
+      }
+    };
+    const caidoEncode = (text: string): Uint8Array =>
+      Uint8Array.from(
+        Array.from(text).flatMap((ch) => {
+          const cp = ch.codePointAt(0)!;
+          return cp <= 0xff ? [cp] : [...new TextEncoder().encode(ch)];
+        }),
+      );
+    const hex = (bytes: Uint8Array) =>
+      Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join(" ");
+    const bytes = (h: string) =>
+      Uint8Array.from(h.split(" "), (b) => parseInt(b, 16));
+
+    let seed = 7;
+    const rnd = (n: number) => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return seed % n;
+    };
+    const pieces = ["é", "한", "😀", "ÿ", "\u0080", "a", "\r\n", "Ã©", "€"];
+    const randomBytes = () => {
+      const len = rnd(40);
+      if (rnd(2) === 0) return Uint8Array.from({ length: len }, () => rnd(256));
+      const text = Array.from({ length: len }, () => pieces[rnd(9)]).join("");
+      const out = [...new TextEncoder().encode(text)];
+      out.splice(rnd(out.length + 1), 0, 0x80 + rnd(128)); // a stray byte
+      return Uint8Array.from(out);
+    };
+
+    it("maps editor text to the bytes Caido sends", () => {
+      expect(hex(editorTextToBytes("é"))).toBe("e9");
+      expect(hex(editorTextToBytes("Ã©"))).toBe("c3 a9");
+      expect(hex(editorTextToBytes("한"))).toBe("ed 95 9c");
+      expect(hex(editorTextToBytes("a😀ÿ"))).toBe("61 f0 9f 98 80 ff");
+      for (let i = 0; i < 2000; i++) {
+        const text = Array.from({ length: rnd(20) }, () =>
+          rnd(3) === 0
+            ? String.fromCharCode(rnd(0x10000)) // lone surrogates too
+            : pieces[rnd(9)],
+        ).join("");
+        expect(hex(editorTextToBytes(text))).toBe(hex(caidoEncode(text)));
+      }
+    });
+
+    it("saves any bytes as text Caido sends back as exactly those bytes", () => {
+      expect(bytesToEditorText(bytes("c3 a9"))).toBe("Ã©");
+      expect(bytesToEditorText(bytes("ed 95 9c"))).toBe("한");
+      expect(bytesToEditorText(bytes("ff 00"))).toBe("ÿ\u0000");
+      for (let i = 0; i < 2000; i++) {
+        const b = randomBytes();
+        expect(hex(caidoEncode(bytesToEditorText(b)))).toBe(hex(b));
+      }
+    });
+
+    it("recovers the bytes of captured messages", () => {
+      const notUtf8 = bytes("41 0a 42 00 01 ff 20");
+      expect(hex(capturedRawToBytes(caidoDecode(notUtf8), 7))).toBe(
+        hex(notUtf8),
+      );
+      // No size given: the C1 control 0x89 means binary
+      const png = bytes("89 50 4e 47 0d 0a 1a 0a");
+      expect(hex(capturedRawToBytes(caidoDecode(png)))).toBe(hex(png));
+      for (const text of ["é", "한", "😀"]) {
+        const utf8 = new TextEncoder().encode(text);
+        expect(hex(capturedRawToBytes(caidoDecode(utf8)))).toBe(hex(utf8));
+      }
+      for (let i = 0; i < 2000; i++) {
+        const b = randomBytes();
+        expect(hex(capturedRawToBytes(caidoDecode(b), b.length))).toBe(hex(b));
+      }
+    });
+
+    it("tells a Latin-1 body from UTF-8 text by Content-Length", () => {
+      const message = (body: string) =>
+        bytes(
+          hex(new TextEncoder().encode(`HTTP/1.1 200 OK\r\nContent-Length: `)) +
+            ` ${hex(new TextEncoder().encode(String(body.split(" ").length)))}` +
+            ` 0d 0a 0d 0a ${body}`,
+        );
+      for (const body of ["e9", "c3 a9", "4a 6f 73 e9", "4a 6f 73 c3 a9"]) {
+        const m = message(body);
+        expect(hex(capturedRawToBytes(caidoDecode(m)))).toBe(hex(m));
+      }
+    });
+
+    it("ignores a Content-Length that fits both readings", () => {
+      // UTF-8 "é" in the path, ASCII body: the body is 3 bytes either way
+      const m = new TextEncoder().encode(
+        "POST /café HTTP/1.1\r\nContent-Length: 3\r\n\r\nabc",
+      );
+      expect(hex(capturedRawToBytes(caidoDecode(m)))).toBe(hex(m));
     });
   });
 });

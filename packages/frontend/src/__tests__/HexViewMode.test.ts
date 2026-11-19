@@ -301,6 +301,29 @@ describe("HexViewMode.vue", () => {
       expect((hexTextarea.element as HTMLTextAreaElement).value).toBe("43");
     });
 
+    it("keeps placeholder bytes after a multi-byte character is typed", async () => {
+      window.location.hash = "#/replay/123";
+      const raw = "A\u0000B";
+      const wrapper = mount(HexViewMode, {
+        props: {
+          sdk: createEditorSdk(raw),
+          request: { raw, host: "test", path: "/" },
+        },
+      });
+      await wrapper.find("td:nth-child(2) span").trigger("dblclick");
+      const ascii = wrapper.find(
+        "textarea[placeholder='ASCII representation']",
+      );
+      const hexBox = wrapper.find("textarea[placeholder*='Enter hex']");
+
+      await ascii.setValue("é.B"); // A -> é (2 bytes)
+      expect((hexBox.element as HTMLTextAreaElement).value).toBe("c3 a9 00 42");
+      await ascii.setValue("é.BC"); // the 00 must not turn into a9
+      expect((hexBox.element as HTMLTextAreaElement).value).toBe(
+        "c3 a9 00 42 43",
+      );
+    });
+
     it("applies changes when OK is clicked", async () => {
       window.location.hash = "#/replay/123";
       const raw = "A";
@@ -541,7 +564,7 @@ describe("HexViewMode.vue", () => {
       );
     });
 
-    it("refuses to save bytes that are not valid UTF-8", async () => {
+    it("saves bytes that are not valid UTF-8 as text Caido sends as them", async () => {
       window.location.hash = "#/replay/123";
       const dispatch = editorMock("Test");
       const wrapper = mount(HexViewMode, {
@@ -553,11 +576,7 @@ describe("HexViewMode.vue", () => {
       await editFirstLine(wrapper, "ff 65 73 74");
       await wrapper.find("button[title='Save Changes']").trigger("click");
 
-      expect(dispatch).not.toHaveBeenCalled();
-      expect(mockSdk.window.showToast).toHaveBeenCalledWith(
-        expect.stringContaining("Failed to update request"),
-        { variant: "error" },
-      );
+      expect(dispatch.mock.calls[0]?.[0].changes.insert).toBe("ÿest");
     });
 
     it("rejects malformed hex in the edit modal and keeps it open", async () => {
@@ -843,6 +862,25 @@ describe("HexViewMode.vue", () => {
       // Should have highlighted spans (orange for current match)
       const highlighted = wrapper.findAll("span.bg-orange-500\\/50");
       expect(highlighted.length).toBeGreaterThan(0);
+    });
+
+    it("highlights exactly the bytes of overlapping matches", async () => {
+      const wrapper = mount(HexViewMode, {
+        props: { ...defaultProps, request: { raw: "xaaaxa" } },
+      });
+      await wrapper.find("button[title*='Search']").trigger("click");
+      await wrapper.find("input[placeholder*='Search hex']").setValue("61 61");
+
+      const marked = wrapper
+        .findAll("td:nth-child(2) span span.cursor-pointer")
+        .map((s) =>
+          s
+            .classes()
+            .some(
+              (c) => c.startsWith("bg-yellow") || c.startsWith("bg-orange"),
+            ),
+        );
+      expect(marked).toEqual([false, true, true, true, false, false]);
     });
 
     it("clears search state when search bar is closed", async () => {
@@ -1258,7 +1296,8 @@ describe("HexViewMode.vue", () => {
   });
 
   describe("HTTP Structure Highlighting", () => {
-    it("toggles structure highlighting on/off", async () => {
+    it("colours each byte by its side of the header/body boundary", async () => {
+      // Header is 30 bytes: the second row holds 14 header and 2 body bytes.
       const wrapper = mount(HexViewMode, {
         props: {
           ...defaultProps,
@@ -1269,27 +1308,35 @@ describe("HexViewMode.vue", () => {
           },
         },
       });
+      const hexBytes = () =>
+        wrapper.findAll("td:nth-child(2) span span.cursor-pointer");
+      const asciiChars = () => wrapper.findAll("td:nth-child(3) span span");
+      const side = (el: { classes: () => string[] }) =>
+        el.classes().includes("bg-purple-500/15")
+          ? "header"
+          : el.classes().includes("bg-emerald-500/15")
+            ? "body"
+            : "none";
 
-      // Initially off
-      expect(wrapper.findAll("tr.bg-purple-500\\/15").length).toBe(0);
-
-      // Click toggle button
+      expect(hexBytes().map(side)).not.toContain("header");
       const toggleBtn = wrapper.find(
         "button[title='Toggle HTTP structure highlighting']",
       );
       await toggleBtn.trigger("click");
 
-      // Header rows should have purple background
-      const purpleRows = wrapper.findAll("tr.bg-purple-500\\/15");
-      expect(purpleRows.length).toBeGreaterThan(0);
+      for (const cells of [hexBytes(), asciiChars()]) {
+        expect(cells.slice(0, 30).map(side)).toEqual(Array(30).fill("header"));
+        expect(cells.slice(30).map(side)).toEqual(Array(4).fill("body"));
+      }
 
-      // Body rows should have emerald background
-      const emeraldRows = wrapper.findAll("tr.bg-emerald-500\\/15");
-      expect(emeraldRows.length).toBeGreaterThan(0);
+      // Selection and search colours still win over the structure colour.
+      await hexBytes()[30]?.trigger("click");
+      expect(side(hexBytes()[30]!)).toBe("none");
+      expect(hexBytes()[30]?.classes()).toContain("bg-blue-500/40");
+      expect(side(asciiChars()[30]!)).toBe("none");
 
-      // Toggle off
       await toggleBtn.trigger("click");
-      expect(wrapper.findAll("tr.bg-purple-500\\/15").length).toBe(0);
+      expect(hexBytes().map(side)).not.toContain("header");
     });
   });
 
@@ -2114,6 +2161,234 @@ describe("HexViewMode.vue", () => {
       await wrapper.vm.$nextTick();
 
       expect(wrapper.find("input[placeholder*='Search']").exists()).toBe(false);
+      wrapper.unmount();
+    });
+  });
+
+  // Caido hands over text: UTF-8 if the bytes were valid UTF-8, else one
+  // character per byte; Replay sends code points up to U+00FF as one byte.
+  describe("Real bytes behind Caido's text", () => {
+    const caidoDecode = (bytes: number[]): string => {
+      try {
+        return new TextDecoder("utf-8", { fatal: true }).decode(
+          Uint8Array.from(bytes),
+        );
+      } catch {
+        return String.fromCharCode(...bytes);
+      }
+    };
+    const caidoEncode = (text: string): number[] =>
+      Array.from(text).flatMap((ch) => {
+        const cp = ch.codePointAt(0)!;
+        return cp <= 0xff ? [cp] : [...new TextEncoder().encode(ch)];
+      });
+    const ascii = (text: string) => [...new TextEncoder().encode(text)];
+    const hex = (bytes: number[]) =>
+      bytes.map((b) => b.toString(16).padStart(2, "0")).join(" ");
+    const shownHex = (wrapper: ReturnType<typeof mount>) =>
+      wrapper
+        .findAll("td:nth-child(2) span span.cursor-pointer")
+        .map((s) => s.text())
+        .join(" ");
+    const ownView = (raw: string) => ({
+      state: { sliceDoc: () => raw, doc: { toString: () => raw, length: 0 } },
+      dispatch: vi.fn(),
+    });
+    const searchAscii = async (
+      wrapper: ReturnType<typeof mount>,
+      query: string,
+    ) => {
+      await wrapper.find("button[title='Search (Ctrl+F)']").trigger("click");
+      await wrapper
+        .findAll("button")
+        .find((b) => b.text() === "ASCII")
+        ?.trigger("click");
+      await wrapper.find("input[placeholder*='Search']").setValue(query);
+      return wrapper
+        .findAll("td:nth-child(2) span span.bg-orange-500\\/50")
+        .map((s) => s.text())
+        .join(" ");
+    };
+
+    it("shows a response body that is not UTF-8 byte for byte", () => {
+      const bytes = [
+        ...ascii("HTTP/1.1 200 OK\r\n\r\n"),
+        ...[0x41, 0x0a, 0x42, 0x00, 0x01, 0xff, 0x20],
+      ];
+      const wrapper = mount(HexViewMode, {
+        props: {
+          ...defaultProps,
+          response: { raw: caidoDecode(bytes), length: bytes.length },
+        },
+      });
+
+      expect(shownHex(wrapper)).toBe(hex(bytes));
+      expect(wrapper.text()).toContain(`${bytes.length} bytes`);
+    });
+
+    it("detects and exports a PNG body as its real bytes", async () => {
+      const png = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff];
+      const bytes = [...ascii("HTTP/1.1 200 OK\r\n\r\n"), ...png];
+      const createObjectURL = vi.fn((_: Blob) => "blob:mock");
+      Object.defineProperty(URL, "createObjectURL", {
+        value: createObjectURL,
+        configurable: true,
+      });
+      Object.defineProperty(URL, "revokeObjectURL", {
+        value: vi.fn(),
+        configurable: true,
+      });
+      HTMLAnchorElement.prototype.click = vi.fn();
+      const wrapper = mount(HexViewMode, {
+        props: {
+          ...defaultProps,
+          response: { raw: caidoDecode(bytes), length: bytes.length },
+        },
+      });
+
+      expect(wrapper.find("[title*='Detected file signature']").text()).toBe(
+        "PNG",
+      );
+      await wrapper.find("button[title='Export binary data']").trigger("click");
+      const blob = createObjectURL.mock.calls[0]![0];
+      expect(hex([...new Uint8Array(await blob.arrayBuffer())])).toBe(
+        hex(bytes),
+      );
+    });
+
+    it("shows UTF-8 text in a captured message as its UTF-8 bytes", () => {
+      const wrapper = mount(HexViewMode, {
+        props: { ...defaultProps, request: { raw: "é한😀" } },
+      });
+      expect(shownHex(wrapper)).toBe(hex(ascii("é한😀")));
+    });
+
+    it("shows a Replay draft as the bytes Caido sends for it", () => {
+      window.location.hash = "#/replay/1";
+      const wrapper = mount(HexViewMode, {
+        props: { ...defaultProps, draft: { raw: "é한" }, view: ownView("é한") },
+      });
+      expect(shownHex(wrapper)).toBe("e9 ed 95 9c");
+    });
+
+    it("saves any bytes as text Caido sends as exactly those bytes", async () => {
+      window.location.hash = "#/replay/1";
+      const own = ownView("Test");
+      const wrapper = mount(HexViewMode, {
+        props: { ...defaultProps, draft: { raw: "Test" }, view: own },
+      });
+      const edited = [
+        0xc3, 0xa9, 0xe9, 0xff, 0x00, 0xed, 0x95, 0x9c, 0xf0, 0x9f, 0x98, 0x80,
+        0x80, 0xc4,
+      ];
+      await wrapper.find("td:nth-child(2) span").trigger("dblclick");
+      await wrapper
+        .find("textarea[placeholder*='Enter hex']")
+        .setValue(hex(edited));
+      await wrapper
+        .findAll("button")
+        .find((b) => b.text() === "OK")
+        ?.trigger("click");
+      await wrapper.find("td:nth-child(2) span span").trigger("click");
+      await wrapper.find("button[title='Save Changes']").trigger("click");
+
+      const insert: string = own.dispatch.mock.calls[0]?.[0].changes.insert;
+      expect(hex(caidoEncode(insert))).toBe(hex(edited));
+      // The saved text echoes back as the draft: same bytes, selection kept.
+      await wrapper.setProps({ draft: { raw: insert } });
+      expect(shownHex(wrapper)).toBe(hex(edited));
+      expect(wrapper.text()).toContain("1 byte(s) selected");
+    });
+
+    it("searches ASCII text the way the pane's text holds it", async () => {
+      window.location.hash = "#/replay/1";
+      const draft = mount(HexViewMode, {
+        props: { ...defaultProps, draft: { raw: "café" }, view: ownView("") },
+      });
+      expect(await searchAscii(draft, "é")).toBe("e9");
+
+      window.location.hash = "";
+      const utf8 = mount(HexViewMode, {
+        props: { ...defaultProps, response: { raw: "café", length: 5 } },
+      });
+      expect(await searchAscii(utf8, "é")).toBe("c3 a9");
+      const latin1 = mount(HexViewMode, {
+        props: { ...defaultProps, response: { raw: "café", length: 4 } },
+      });
+      expect(await searchAscii(latin1, "é")).toBe("e9");
+    });
+  });
+
+  describe("ASCII column layout", () => {
+    it("keeps spaces and never wraps", () => {
+      const wrapper = mount(HexViewMode, {
+        props: { ...defaultProps, request: { raw: "a  b" } },
+      });
+      expect(wrapper.find("td:nth-child(3) > span").classes()).toContain(
+        "whitespace-pre",
+      );
+    });
+  });
+
+  describe("Edit modal keyboard", () => {
+    const open = async () => {
+      window.location.hash = "#/replay/1";
+      const raw = "Test";
+      const view = {
+        state: { sliceDoc: () => raw, doc: { toString: () => raw, length: 4 } },
+        dispatch: vi.fn(),
+      };
+      const wrapper = mount(HexViewMode, {
+        props: { ...defaultProps, draft: { raw }, view },
+        attachTo: document.body,
+      });
+      await wrapper.find("td:nth-child(2) span").trigger("dblclick");
+      await wrapper.vm.$nextTick();
+      return wrapper;
+    };
+    const hexBox = (wrapper: ReturnType<typeof mount>) =>
+      wrapper.find("textarea[placeholder*='Enter hex']");
+
+    it("takes focus, cancels on Escape and applies on Ctrl/Cmd+Enter", async () => {
+      const wrapper = await open();
+      expect(document.activeElement).toBe(hexBox(wrapper).element);
+
+      await hexBox(wrapper).setValue("42 65 73 74");
+      await hexBox(wrapper).trigger("keydown", { key: "Escape" });
+      expect(hexBox(wrapper).exists()).toBe(false);
+      expect(wrapper.find("td:nth-child(3)").text()).toBe("Test");
+
+      for (const mod of [{ ctrlKey: true }, { metaKey: true }]) {
+        await wrapper.find("td:nth-child(2) span").trigger("dblclick");
+        await hexBox(wrapper).setValue(mod.ctrlKey ? "42 65 73 74" : "52");
+        await hexBox(wrapper).trigger("keydown", { key: "Enter", ...mod });
+        expect(hexBox(wrapper).exists()).toBe(false);
+      }
+      expect(wrapper.find("td:nth-child(3)").text()).toBe("R");
+      wrapper.unmount();
+    });
+
+    it("keeps Ctrl+F/Ctrl+G inside the modal, and works again after it", async () => {
+      const wrapper = await open();
+      const ok = wrapper.findAll("button").find((b) => b.text() === "OK")!;
+      (ok.element as HTMLElement).focus();
+      for (const key of ["f", "g"]) {
+        ok.element.dispatchEvent(
+          new KeyboardEvent("keydown", { key, ctrlKey: true, bubbles: true }),
+        );
+      }
+      await wrapper.vm.$nextTick();
+      expect(wrapper.find("input[placeholder*='Search']").exists()).toBe(false);
+      expect(wrapper.find("input[placeholder*='Hex (0x']").exists()).toBe(
+        false,
+      );
+
+      await ok.trigger("click");
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "f", ctrlKey: true }),
+      );
+      await wrapper.vm.$nextTick();
+      expect(wrapper.find("input[placeholder*='Search']").exists()).toBe(true);
       wrapper.unmount();
     });
   });
