@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+
 import { init } from "../index";
 import type { FrontendSDK } from "../types";
 import HexViewMode from "../views/HexViewMode.vue";
@@ -15,19 +16,35 @@ describe("init", () => {
     const sitemapResMock = vi.fn();
 
     const sdk: FrontendSDK = {
-      httpHistory: { addRequestViewMode: httpHistoryReqMock, addResponseViewMode: httpHistoryResMock },
-      replay: { addRequestViewMode: replayReqMock, addResponseViewMode: replayResMock },
-      search: { addRequestViewMode: searchReqMock, addResponseViewMode: searchResMock },
-      sitemap: { addRequestViewMode: sitemapReqMock, addResponseViewMode: sitemapResMock },
+      httpHistory: {
+        addRequestViewMode: httpHistoryReqMock,
+        addResponseViewMode: httpHistoryResMock,
+      },
+      replay: {
+        addRequestViewMode: replayReqMock,
+        addResponseViewMode: replayResMock,
+      },
+      search: {
+        addRequestViewMode: searchReqMock,
+        addResponseViewMode: searchResMock,
+      },
+      sitemap: {
+        addRequestViewMode: sitemapReqMock,
+        addResponseViewMode: sitemapResMock,
+      },
     } as unknown as FrontendSDK;
 
     init(sdk);
 
     const allMocks = [
-      httpHistoryReqMock, httpHistoryResMock,
-      replayReqMock, replayResMock,
-      searchReqMock, searchResMock,
-      sitemapReqMock, sitemapResMock,
+      httpHistoryReqMock,
+      httpHistoryResMock,
+      replayReqMock,
+      replayResMock,
+      searchReqMock,
+      searchResMock,
+      sitemapReqMock,
+      sitemapResMock,
     ];
 
     allMocks.forEach((mock) => {

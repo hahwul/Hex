@@ -119,7 +119,13 @@ const FILE_SIGNATURES: FileSignature[] = [
   { name: "Mach-O (64)", bytes: [0xfe, 0xed, 0xfa, 0xcf] },
   // Other
   { name: "WASM", bytes: [0x00, 0x61, 0x73, 0x6d] },
-  { name: "SQLite", bytes: [0x53, 0x51, 0x4c, 0x69, 0x74, 0x65, 0x20, 0x66, 0x6f, 0x72, 0x6d, 0x61, 0x74, 0x20, 0x33, 0x00] },
+  {
+    name: "SQLite",
+    bytes: [
+      0x53, 0x51, 0x4c, 0x69, 0x74, 0x65, 0x20, 0x66, 0x6f, 0x72, 0x6d, 0x61,
+      0x74, 0x20, 0x33, 0x00,
+    ],
+  },
   { name: "FLAC", bytes: [0x66, 0x4c, 0x61, 0x43] },
   { name: "OGG", bytes: [0x4f, 0x67, 0x67, 0x53] },
   { name: "MP3 (ID3)", bytes: [0x49, 0x44, 0x33] },
@@ -148,7 +154,13 @@ export const detectFileSignature = (data: Uint8Array): string | null => {
     if (match) {
       // Special check for WebP: bytes 8-11 must be "WEBP"
       if (sig.name === "WebP") {
-        if (data.length < 12 || data[8] !== 0x57 || data[9] !== 0x45 || data[10] !== 0x42 || data[11] !== 0x50) {
+        if (
+          data.length < 12 ||
+          data[8] !== 0x57 ||
+          data[9] !== 0x45 ||
+          data[10] !== 0x42 ||
+          data[11] !== 0x50
+        ) {
           continue;
         }
       }
@@ -162,7 +174,13 @@ export const detectFileSignature = (data: Uint8Array): string | null => {
 /**
  * Format bytes in various programming-friendly formats
  */
-export type CopyFormat = "raw-hex" | "spaced-hex" | "c-array" | "python-bytes" | "json-array" | "hexdump";
+export type CopyFormat =
+  | "raw-hex"
+  | "spaced-hex"
+  | "c-array"
+  | "python-bytes"
+  | "json-array"
+  | "hexdump";
 
 export const formatBytes = (
   bytes: Uint8Array,
@@ -174,13 +192,25 @@ export const formatBytes = (
 
   switch (format) {
     case "raw-hex":
-      return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
+      return Array.from(bytes)
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
     case "spaced-hex":
-      return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join(" ");
+      return Array.from(bytes)
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join(" ");
     case "c-array":
-      return Array.from(bytes).map((b) => "\\x" + b.toString(16).padStart(2, "0")).join("");
+      return Array.from(bytes)
+        .map((b) => "\\x" + b.toString(16).padStart(2, "0"))
+        .join("");
     case "python-bytes":
-      return "b'" + Array.from(bytes).map((b) => "\\x" + b.toString(16).padStart(2, "0")).join("") + "'";
+      return (
+        "b'" +
+        Array.from(bytes)
+          .map((b) => "\\x" + b.toString(16).padStart(2, "0"))
+          .join("") +
+        "'"
+      );
     case "json-array":
       return "[" + Array.from(bytes).join(", ") + "]";
     case "hexdump": {
@@ -188,8 +218,12 @@ export const formatBytes = (
       for (let i = 0; i < bytes.length; i += bytesPerRow) {
         const chunk = bytes.slice(i, i + bytesPerRow);
         const offset = (baseOffset + i).toString(16).padStart(8, "0");
-        const hex = Array.from(chunk).map((b) => b.toString(16).padStart(2, "0")).join(" ");
-        const ascii = Array.from(chunk).map((b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : ".")).join("");
+        const hex = Array.from(chunk)
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join(" ");
+        const ascii = Array.from(chunk)
+          .map((b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : "."))
+          .join("");
         lines.push(`${offset}  ${hex.padEnd(bytesPerRow * 3 - 1)}  ${ascii}`);
       }
       return lines.join("\n");
@@ -267,7 +301,10 @@ export const utf8CutIndex = (encoded: Uint8Array, maxBytes: number): number => {
  * Strips path separators, control characters, and anything else that could
  * be used to escape the intended download location.
  */
-export const sanitizeFilename = (input: string, fallback = "export.bin"): string => {
+export const sanitizeFilename = (
+  input: string,
+  fallback = "export.bin",
+): string => {
   // Drop CR/LF and other control chars, then strip path separators.
   let cleaned = input
     .replace(/[\x00-\x1f\x7f]/g, "")
